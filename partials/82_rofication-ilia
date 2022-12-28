@@ -1,0 +1,8 @@
+## Launch // Notification Viewer // <> n ##
+set_from_resource $wm.binding.notification_ui wm.binding.notification_ui n
+set_from_resource $wm.program.notification_ui wm.program.notification_ui ilia -p notifications
+bindsym $mod+$wm.binding.notification_ui exec --no-startup-id $wm.program.notification_ui
+
+# Start Rofication for notifications
+set_from_resource $wm.program.notifications wm.program.notifications /usr/bin/rofication-daemon
+exec --no-startup-id $wm.program.notifications

@@ -1,0 +1,35 @@
+## Resize // Enter Resize Mode // <> r ##
+set_from_resource $wm.resize.small wm.resize.small 6
+set_from_resource $wm.resize.large wm.resize.large 24
+mode "Resize Mode" {
+        # These bindings trigger as soon as you enter the resize mode
+
+        ## Resize // Resize Window // ↑ ↓ ← → ##
+        bindsym Left resize shrink width $wm.resize.small px or $wm.resize.small ppt
+        bindsym Down resize grow height $wm.resize.small px or $wm.resize.small ppt
+        bindsym Up resize shrink height $wm.resize.small px or $wm.resize.small ppt
+        bindsym Right resize grow width $wm.resize.small px or $wm.resize.small ppt
+
+        bindsym Shift+Left resize shrink width $wm.resize.large px or $wm.resize.large ppt
+        bindsym Shift+Down resize grow height $wm.resize.large px or $wm.resize.large ppt
+        bindsym Shift+Up resize shrink height $wm.resize.large px or $wm.resize.large ppt
+        bindsym Shift+Right resize grow width $wm.resize.large px or $wm.resize.large ppt
+
+        ## Resize // Resize Window // k j h l ##
+        bindsym $wm.binding.left resize shrink width $wm.resize.small px or $wm.resize.small ppt
+        bindsym $wm.binding.up resize grow height $wm.resize.small px or $wm.resize.small ppt
+        bindsym $wm.binding.down resize shrink height $wm.resize.small px or $wm.resize.small ppt
+        bindsym $wm.binding.right resize grow width $wm.resize.small px or $wm.resize.small ppt
+
+        bindsym $wm.binding.move_left resize shrink width $wm.resize.large px or $wm.resize.large ppt
+        bindsym $wm.binding.move_up resize grow height $wm.resize.large px or $wm.resize.large ppt
+        bindsym $wm.binding.move_down resize shrink height $wm.resize.large px or $wm.resize.large ppt
+        bindsym $wm.binding.move_right resize grow width $wm.resize.large px or $wm.resize.large ppt
+
+        ## Resize // Exit Resize Mode // Escape or Enter ##
+        bindsym Return mode "default"
+        bindsym Escape mode "default"
+        bindsym $mod+r mode "default"
+}
+set_from_resource $wm.binding.resize_mode wm.binding.resize_mode r
+bindsym $mod+$wm.binding.resize_mode mode "Resize Mode"

@@ -1,0 +1,49 @@
+###############################################################################
+# Session Management
+###############################################################################
+
+## Session // Exit App // <><Shift> q ##
+set_from_resource $wm.binding.exit_app wm.binding.exit_app Shift+q
+bindsym $mod+$wm.binding.exit_app [con_id="__focused__"] kill
+
+## Session // Terminate App // <><Alt> q ##
+set_from_resource $wm.binding.kill_app wm.binding.kill_app q
+bindsym $mod+$alt+$wm.binding.kill_app [con_id="__focused__"] exec --no-startup-id kill -9 $(xdotool getwindowfocus getwindowpid)
+
+## Session // Reload WM Config // <><Shift> c ##
+set_from_resource $wm.binding.reload wm.binding.reload Shift+c
+bindsym $mod+$wm.binding.reload reload
+
+## Session // Refresh Session // <><Shift> r ##
+set_from_resource $wm.binding.refresh wm.binding.refresh Shift+r
+set_from_resource $wm.program.refresh_ui wm.program.refresh_ui /usr/bin/regolith-look refresh
+bindsym $mod+$wm.binding.refresh exec --no-startup-id $wm.program.refresh_ui
+
+## Session // Restart WM // <><Ctrl> r ##
+set_from_resource $wm.binding.restart wm.binding.restart Ctrl+r
+bindsym $mod+$wm.binding.restart restart
+
+## Session // Logout // <><Shift> e ##
+set_from_resource $wm.binding.logout wm.binding.logout Shift+e
+set_from_resource $wm.program.logout wm.program.logout /usr/bin/gnome-session-quit --logout
+bindsym $mod+$wm.binding.logout exec $wm.program.logout
+
+## Session // Reboot // <><Shift> b ##
+set_from_resource $wm.binding.reboot wm.binding.reboot Shift+b
+set_from_resource $wm.program.reboot wm.program.reboot /usr/bin/gnome-session-quit --reboot
+bindsym $mod+$wm.binding.reboot exec $wm.program.reboot
+
+## Session // Power Down // <><Shift> p ##
+set_from_resource $wm.binding.shutdown wm.binding.shutdown Shift+p
+set_from_resource $wm.program.shutdown wm.program.shutdown /usr/bin/gnome-session-quit --power-off
+bindsym $mod+$wm.binding.shutdown exec $wm.program.shutdown
+
+## Session // Lock Screen // <> Escape ##
+set_from_resource $wm.binding.lock wm.binding.lock Escape
+set_from_resource $wm.program.lock wm.program.lock dbus-send --type=method_call --dest=org.gnome.ScreenSaver /org/gnome/ScreenSaver org.gnome.ScreenSaver.Lock
+bindsym $mod+$wm.binding.lock exec $wm.program.lock
+
+## Session // Sleep // <><Shift> s ##
+set_from_resource $wm.binding.sleep wm.binding.sleep Shift+s
+set_from_resource $wm.program.sleep wm.program.sleep systemctl suspend
+bindsym $mod+$wm.binding.sleep exec $wm.program.sleep

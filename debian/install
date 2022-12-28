@@ -1,0 +1,3 @@
+config /etc/regolith/wm/
+
+scripts/regolith-look-selector /usr/bin
