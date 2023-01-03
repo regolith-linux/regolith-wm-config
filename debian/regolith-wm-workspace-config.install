@@ -1,1 +1,1 @@
-partials/40_workspace-config  /usr/share/regolith/wm/config.d
+usr/share/regolith/common/config.d/40_workspace-config

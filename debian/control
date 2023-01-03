@@ -13,32 +13,42 @@ Depends: ${misc:Depends},
   xdg-utils,
   xdotool
 Recommends: regolith-wm-base-launchers,
-  regolith-wm-default-style,
   regolith-wm-navigation,
   regolith-wm-networkmanager,
   regolith-wm-next-workspace,
   regolith-wm-resize,
   regolith-wm-session,
-  regolith-wm-unclutter,
-  regolith-wm-user-programs,
   regolith-wm-workspace-config
-Conflicts: regolith-i3-config
-Replaces: regolith-i3-config
+Conflicts: regolith-i3-config, regolith-sway-config
+Replaces: regolith-i3-config, regolith-sway-config
 Description: Regolith window manager config file
  This is the i3 config file for the Regolith desktop environment.
 
-Package: regolith-wm-default-style
+Package: regolith-i3-default-style
 Architecture: any
 Depends: ${misc:Depends},
     regolith-wm-config
-Description: Regolith window manager style
+Description: Regolith i3 style
  Basic UI configuration for i3 based on Regolith's default style.
 
-Package: regolith-wm-session
+Package: regolith-sway-default-style
+Architecture: any
+Depends: ${misc:Depends},
+    regolith-wm-config
+Description: Regolith sway style
+ Basic UI configuration for sway based on Regolith's default style.
+
+Package: regolith-i3-session
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
-Description: Regolith Desktop session keybindings
+Description: Regolith Desktop i3 session keybindings
+
+Package: regolith-sway-session
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith Desktop sway session keybindings
 
 Package: regolith-wm-resize
 Architecture: any
@@ -117,7 +127,7 @@ Conflicts: regolith-wm-rofication
 Description: Rofi based notifications
  Rofication keybindings for ilia.
 
-Package: regolith-wm-control-center-regolith
+Package: regolith-i3-control-center-regolith
 Architecture: any
 Depends: ${misc:Depends},
     regolith-wm-config,
@@ -129,7 +139,7 @@ Replaces: regolith-wm-control-center, regolith-wm-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
 
-Package: regolith-wm-control-center-gnome
+Package: regolith-i3-control-center-gnome
 Architecture: any
 Depends: ${misc:Depends},
     regolith-wm-config,
@@ -141,7 +151,7 @@ Replaces: regolith-wm-control-center, regolith-wm-gnome
 Description: gnome integrations for system management
  Launch gnome settings app for system management.
 
-Package: regolith-i3-next-workspace
+Package: regolith-wm-next-workspace
 Architecture: any
 Depends: ${misc:Depends},
     regolith-wm-config,
@@ -149,7 +159,7 @@ Depends: ${misc:Depends},
 Description: easy i3 workspace creation
  Automatically determine unused workspace to move to.
 
-Package: regolith-i3-swap-focus
+Package: regolith-wm-swap-focus
 Architecture: any
 Depends: ${misc:Depends},
     regolith-wm-config,
@@ -166,13 +176,13 @@ Depends: ${misc:Depends},
 Description: regolith default bar and status indicators
  Status bar indicator integration.
 
-Package: regolith-i3-networkmanager
+Package: regolith-wm-networkmanager
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
   network-manager-gnome
-Description: nm-applet integration with i3
- Launches nm-applet at i3 start.
+Description: nm-applet integration with wm
+ Launches nm-applet at wm start.
 
 Package: regolith-wm-base-launchers
 Architecture: any
@@ -195,3 +205,9 @@ Depends: ${misc:Depends},
     regolith-wm-config
 Description: Configuration for navigation
  Keybindings for workspace navigation.
+
+Package: regolith-sway-dbus-activation
+Architecture: any
+Depends: ${misc:Depends},
+    regolith-wm-config
+Description: Regolith dbus activation
