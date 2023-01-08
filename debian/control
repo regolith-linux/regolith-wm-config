@@ -168,9 +168,9 @@ Description: regolith and gnome integrations for system management
 Package: regolith-sway-control-center-regolith
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    regolith-control-center,
-    gnome-settings-daemon
+  regolith-wm-config,
+  regolith-control-center,
+  gnome-settings-daemon
 Provides: regolith-wm-control-center
 Conflicts: regolith-wm-control-center, regolith-wm-gnome
 Replaces: regolith-wm-control-center, regolith-wm-gnome
@@ -247,7 +247,7 @@ Description: Configuration for navigation
 Package: regolith-sway-dbus-activation
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config
+  regolith-wm-config
 Description: Regolith dbus activation
 
 Package: regolith-sway-screensharing
@@ -259,24 +259,24 @@ Description: Configuration for screensharing
 Package: regolith-sway-gsd
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-inputd,
-    regolith-displayd,
-    regolith-wm-config
+  regolith-inputd,
+  regolith-displayd,
+  regolith-wm-config
 Description: Configuration for providing functionality equivalent
   to gnome-settings-daemon.
 
 Package: regolith-sway-media-keys
 Architecture: any
 Depends: ${misc:Depends},
-    playerctl,
-    regolith-avizo,
-    regolith-wm-config
+  playerctl,
+  regolith-avizo,
+  regolith-wm-config
 Description: Configuration for providing media key functionality
 
 Package: regolith-sway-i3status-rs
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-inputd,
-    regolith-displayd,
-    regolith-wm-config
+  regolith-inputd,
+  regolith-displayd,
+  regolith-wm-config
 Description: Configuration for providing media key functionality
