@@ -27,13 +27,13 @@ Description: Regolith window manager config file
 Package: regolith-i3-root-config
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    regolith-i3-default-style,
-    regolith-i3-session
+  regolith-wm-config,
+  regolith-i3-default-style,
+  regolith-i3-session
 Recommends: regolith-i3-compositor,
-regolith-i3-control-center-regolith,
-regolith-i3-i3xrocks,
-regolith-i3-unclutter
+  regolith-i3-control-center-regolith,
+  regolith-i3-i3xrocks,
+  regolith-i3-unclutter
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -46,21 +46,21 @@ Depends: ${misc:Depends},
   reegolith-sway-screensharing,
   regolith-sway-session
 Recommends: regolith-i3-control-center-regolith,
-regolith-i3-unclutter
+  regolith-i3-unclutter
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
 
 Package: regolith-i3-default-style
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config
+  regolith-wm-config
 Description: Regolith i3 style
  Basic UI configuration for i3 based on Regolith's default style.
 
 Package: regolith-sway-default-style
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config
+  regolith-wm-config
 Description: Regolith sway style
  Basic UI configuration for sway based on Regolith's default style.
 
@@ -116,9 +116,9 @@ Description: Hide the mouse cursor if not used
 Package: regolith-i3-rofi
 Architecture: any
 Depends: ${misc:Depends},
-    rofi,
-    regolith-wm-config,
-    regolith-rofi-config
+  rofi,
+  regolith-wm-config,
+  regolith-rofi-config
 Conflicts: regolith-wm-ilia
 Description: Global menu system
  Legacy Rofi support
@@ -126,8 +126,8 @@ Description: Global menu system
 Package: regolith-wm-ilia
 Architecture: any
 Depends: ${misc:Depends},
-    ilia,
-    regolith-wm-config
+  ilia,
+  regolith-wm-config
 Conflicts: regolith-wm-remontoire, regolith-i3-rofi
 Description: Desktop executor
  Manage apps, commands, notifications, keybindings, and 
@@ -136,9 +136,9 @@ Description: Desktop executor
 Package: regolith-i3-rofication
 Architecture: any
 Depends: ${misc:Depends},
-    rofi,
-    regolith-wm-config,
-    regolith-rofication
+  rofi,
+  regolith-wm-config,
+  regolith-rofication
 Conflicts: regolith-wm-rofication-ilia
 Description: Rofi based notifications
  Rofication keybindings for Rofi.
@@ -146,9 +146,9 @@ Description: Rofi based notifications
 Package: regolith-wm-rofication-ilia
 Architecture: any
 Depends: ${misc:Depends},
-    ilia,
-    regolith-wm-config,
-    regolith-rofication
+  ilia,
+  regolith-wm-config,
+  regolith-rofication
 Conflicts: regolith-wm-rofication
 Description: Rofi based notifications
  Rofication keybindings for ilia.
@@ -156,9 +156,9 @@ Description: Rofi based notifications
 Package: regolith-i3-control-center-regolith
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    regolith-control-center,
-    gnome-settings-daemon
+  regolith-wm-config,
+  regolith-control-center,
+  gnome-settings-daemon
 Provides: regolith-wm-control-center
 Conflicts: regolith-wm-control-center, regolith-wm-gnome
 Replaces: regolith-wm-control-center, regolith-wm-gnome
@@ -180,9 +180,9 @@ Description: regolith and gnome integrations for system management
 Package: regolith-i3-control-center-gnome
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    gnome-control-center,
-    gnome-settings-daemon
+  regolith-wm-config,
+  gnome-control-center,
+  gnome-settings-daemon
 Provides: regolith-wm-control-center
 Conflicts: regolith-wm-control-center, regolith-wm-gnome
 Replaces: regolith-wm-control-center, regolith-wm-gnome
@@ -192,25 +192,25 @@ Description: gnome integrations for system management
 Package: regolith-wm-next-workspace
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    i3-next-workspace
+  regolith-wm-config,
+  i3-next-workspace
 Description: easy i3 workspace creation
  Automatically determine unused workspace to move to.
 
 Package: regolith-wm-swap-focus
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    i3-swap-focus
+  regolith-wm-config,
+  i3-swap-focus
 Description: Navigate to last focused window
  Automatically swap back to the last window on any workspace.
 
 Package: regolith-i3-i3xrocks
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config,
-    i3xrocks,
-    regolith-i3xrocks-config
+  regolith-wm-config,
+  i3xrocks,
+  regolith-i3xrocks-config
 Description: regolith default bar and status indicators
  Status bar indicator integration.
 
@@ -225,22 +225,22 @@ Description: nm-applet integration with wm
 Package: regolith-wm-base-launchers
 Architecture: any
 Depends: ${misc:Depends},
-    libgtk-3-bin,
-    regolith-wm-config
+  libgtk-3-bin,
+  regolith-wm-config
 Description: Terminal and Browser launcher config
  Adds keybindings for terminal and browser.
 
 Package: regolith-wm-workspace-config
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config
+  regolith-wm-config
 Description: Configuration for windows and workspaces
  Keybindings to navigate and manage windows and workspaces.
 
 Package: regolith-wm-navigation
 Architecture: any
 Depends: ${misc:Depends},
-    regolith-wm-config
+  regolith-wm-config
 Description: Configuration for navigation
  Keybindings for workspace navigation.
 
@@ -280,4 +280,3 @@ Depends: ${misc:Depends},
     regolith-displayd,
     regolith-wm-config
 Description: Configuration for providing media key functionality
-
