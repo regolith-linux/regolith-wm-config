@@ -43,7 +43,7 @@ Depends: ${misc:Depends},
   regolith-wm-config,
   regolith-sway-dbus-activation,
   regolith-sway-default-style,
-  reegolith-sway-screensharing,
+  regolith-sway-screensharing,
   regolith-sway-gsd,
   regolith-sway-session
 Recommends: regolith-i3-control-center-regolith,
@@ -256,7 +256,7 @@ Description: Regolith dbus activation
 Package: regolith-sway-screensharing
 Architecture: any
 Depends: ${misc:Depends},
-    xdg-dekstop-portal,
+    xdg-desktop-portal,
     xdg-desktop-portal-wlr,
     regolith-wm-config
 Description: Configuration for screensharing
@@ -282,5 +282,22 @@ Package: regolith-sway-i3status-rs
 Architecture: any
 Depends: ${misc:Depends},
     i3status-rs,
+    regolith-wm-config
+Description: Configuration for providing media key functionality
+
+Package: regolith-sway-background
+Architecture: any
+Depends: ${misc:Depends},
+    libxml2-utils,
+    file,
+    jq,
+    regolith-wm-config
+Description: Configuration for providing media key functionality
+
+
+Package: regolith-sway-polkit
+Architecture: any
+Depends: ${misc:Depends},
+    policykit-1-gnome,
     regolith-wm-config
 Description: Configuration for providing media key functionality
