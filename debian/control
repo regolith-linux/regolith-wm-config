@@ -265,6 +265,7 @@ Package: regolith-sway-gsd
 Architecture: any
 Depends: ${misc:Depends},
   regolith-inputd,
+  regolith-powerd,
   regolith-displayd,
   regolith-wm-config
 Description: Configuration for providing functionality equivalent
