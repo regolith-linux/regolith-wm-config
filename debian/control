@@ -291,6 +291,7 @@ Depends: ${misc:Depends},
     libxml2-utils,
     file,
     jq,
+    trawlcat,
     regolith-wm-config
 Description: Configuration for providing media key functionality
 
@@ -301,3 +302,12 @@ Depends: ${misc:Depends},
     policykit-1-gnome,
     regolith-wm-config
 Description: Configuration for providing media key functionality
+
+Package: regolith-sway-gtklock
+Architecture: any
+Depends: ${misc:Depends},
+    gtklock,
+    trawlcat,
+    regolith-wm-config,
+Description: Configuration for using gtklock as the default locker
+
