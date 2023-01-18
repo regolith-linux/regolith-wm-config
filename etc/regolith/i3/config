@@ -130,8 +130,11 @@ font pango:$wm.font
 # WM Config Partials
 ###############################################################################
 
-# Include any regolith wm partials
-include /usr/share/regolith/wm/config.d/*
+# Include common partials
+include /usr/share/regolith/common/config.d/*
+
+# Include any regolith i3 partials
+include /usr/share/regolith/i3/config.d/*
 
 # Include any user wm partials
 include $HOME/.config/regolith2/wm/config.d/*
