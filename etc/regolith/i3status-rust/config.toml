@@ -1,0 +1,44 @@
+theme = "semi-native"
+icons = "awesome"
+
+[[block]]
+block = "net"
+
+[[block]]
+block = "disk_space"
+path = "/"
+info_type = "used"
+format = "{icon} {percentage}"
+alert_absolute = true
+unit = "GB"
+alert = 50
+warning = 40
+
+[[block]]
+block = "memory"
+display_type = "memory"
+format_mem = "{mem_used_percents}"
+format_swap = "{swap_used_percents}"
+
+[[block]]
+block = "battery"
+interval = 10
+format = " {percentage}"
+full_format = " {percentage}"
+hide_missing = true
+driver = "sysfs"
+
+[[block]]
+block = "rofication"
+interval = 1
+socket_path = "/tmp/rofi_notification_daemon"
+
+[[block]]
+block = "sound"
+driver = "pulseaudio"
+
+[[block]]
+block = "time"
+interval = 5
+format = "%d/%m %R"
+

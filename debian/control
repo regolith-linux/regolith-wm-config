@@ -1,0 +1,314 @@
+Source: regolith-wm-config
+Section: x11
+Priority: optional
+Maintainer: Ken Gilmer <kgilmer@gmail.com>
+Build-Depends: debhelper (>= 11)
+Standards-Version: 4.1.3
+Homepage: https://github.com/regolith-linux/regolith-wm-gaps-config
+
+Package: regolith-wm-config
+Architecture: any
+Depends: ${misc:Depends},
+  i3-wm (>= 4.20) | i3-gaps-wm (>=4.20) | sway-regolith,
+  xdg-utils,
+  xdotool
+Recommends: regolith-wm-base-launchers,
+  regolith-wm-navigation,
+  regolith-wm-networkmanager,
+  regolith-wm-next-workspace,
+  regolith-wm-resize,
+  regolith-wm-session,
+  regolith-wm-workspace-config
+Conflicts: regolith-i3-config, regolith-sway-config
+Replaces: regolith-i3-config, regolith-sway-config
+Description: Regolith window manager config file
+ This is the i3 config file for the Regolith desktop environment.
+
+Package: regolith-i3-root-config
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  regolith-i3-default-style,
+  regolith-i3-session
+Recommends: regolith-i3-compositor,
+  regolith-i3-control-center-regolith,
+  regolith-i3-i3xrocks,
+  regolith-i3-unclutter
+Description: Regolith i3 root config file
+ Basic UI configuration for i3 based on Regolith's default style.
+
+Package: regolith-sway-root-config
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  regolith-sway-dbus-activation,
+  regolith-sway-default-style,
+  regolith-sway-screensharing,
+  regolith-sway-gsd,
+  regolith-sway-session
+Recommends: regolith-i3-control-center-regolith,
+  regolith-sway-media-keys,
+  regolith-sway-i3status-rs,
+  regolith-sway-unclutter
+Description: Regolith sway root config file
+ Basic UI configuration for sway based on Regolith's default style.
+
+Package: regolith-i3-default-style
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith i3 style
+ Basic UI configuration for i3 based on Regolith's default style.
+
+Package: regolith-sway-default-style
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith sway style
+ Basic UI configuration for sway based on Regolith's default style.
+
+Package: regolith-i3-session
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith Desktop i3 session keybindings
+
+Package: regolith-sway-session
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith Desktop sway session keybindings
+
+Package: regolith-wm-resize
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith Desktop resize keybindings
+
+Package: regolith-wm-user-programs
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith Desktop custom user programs
+ Support for Regolith 1.x style user programs.
+
+Package: regolith-wm-ftue
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-ftue,
+  regolith-wm-config,
+  ilia
+Description: Help for new users
+ Presents the keybindings view on first login.
+
+Package: regolith-i3-compositor
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-compositor-none | regolith-compositor
+Description: Integration of compositor into i3
+ Launches a compositor for window effects.
+
+Package: regolith-i3-unclutter
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  regolith-unclutter-xfixes
+Description: Hide the mouse cursor if not used
+ Launches unclutter upon start to hide mouse when not in use.
+
+Package: regolith-i3-rofi
+Architecture: any
+Depends: ${misc:Depends},
+  rofi,
+  regolith-wm-config,
+  regolith-rofi-config
+Conflicts: regolith-wm-ilia
+Description: Global menu system
+ Legacy Rofi support
+
+Package: regolith-wm-ilia
+Architecture: any
+Depends: ${misc:Depends},
+  ilia,
+  regolith-wm-config
+Conflicts: regolith-wm-remontoire, regolith-i3-rofi
+Description: Desktop executor
+ Manage apps, commands, notifications, keybindings, and 
+ windows with this utility.
+
+Package: regolith-i3-rofication
+Architecture: any
+Depends: ${misc:Depends},
+  rofi,
+  regolith-wm-config,
+  regolith-rofication
+Conflicts: regolith-wm-rofication-ilia
+Description: Rofi based notifications
+ Rofication keybindings for Rofi.
+
+Package: regolith-wm-rofication-ilia
+Architecture: any
+Depends: ${misc:Depends},
+  ilia,
+  regolith-wm-config,
+  regolith-rofication
+Conflicts: regolith-wm-rofication
+Description: Rofi based notifications
+ Rofication keybindings for ilia.
+
+Package: regolith-i3-control-center-regolith
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  regolith-control-center,
+  gnome-settings-daemon
+Provides: regolith-wm-control-center
+Conflicts: regolith-wm-control-center, regolith-wm-gnome
+Replaces: regolith-wm-control-center, regolith-wm-gnome
+Description: regolith and gnome integrations for system management
+ Launch regolith settings app for system management.
+
+Package: regolith-sway-control-center-regolith
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  regolith-control-center,
+  gnome-settings-daemon
+Provides: regolith-wm-control-center
+Conflicts: regolith-wm-control-center, regolith-wm-gnome
+Replaces: regolith-wm-control-center, regolith-wm-gnome
+Description: regolith and gnome integrations for system management
+ Launch regolith settings app for system management.
+
+Package: regolith-i3-control-center-gnome
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  gnome-control-center,
+  gnome-settings-daemon
+Provides: regolith-wm-control-center
+Conflicts: regolith-wm-control-center, regolith-wm-gnome
+Replaces: regolith-wm-control-center, regolith-wm-gnome
+Description: gnome integrations for system management
+ Launch gnome settings app for system management.
+
+Package: regolith-wm-next-workspace
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  i3-next-workspace
+Description: easy i3 workspace creation
+ Automatically determine unused workspace to move to.
+
+Package: regolith-wm-swap-focus
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  i3-swap-focus
+Description: Navigate to last focused window
+ Automatically swap back to the last window on any workspace.
+
+Package: regolith-i3-i3xrocks
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  i3xrocks,
+  regolith-i3xrocks-config
+Description: regolith default bar and status indicators
+ Status bar indicator integration.
+
+Package: regolith-wm-networkmanager
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  network-manager-gnome
+Description: nm-applet integration with wm
+ Launches nm-applet at wm start.
+
+Package: regolith-wm-base-launchers
+Architecture: any
+Depends: ${misc:Depends},
+  libgtk-3-bin,
+  regolith-wm-config
+Description: Terminal and Browser launcher config
+ Adds keybindings for terminal and browser.
+
+Package: regolith-wm-workspace-config
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Configuration for windows and workspaces
+ Keybindings to navigate and manage windows and workspaces.
+
+Package: regolith-wm-navigation
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Configuration for navigation
+ Keybindings for workspace navigation.
+
+Package: regolith-sway-dbus-activation
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith dbus activation
+
+Package: regolith-sway-screensharing
+Architecture: any
+Depends: ${misc:Depends},
+    xdg-desktop-portal,
+    xdg-desktop-portal-wlr,
+    regolith-wm-config
+Description: Configuration for screensharing
+
+Package: regolith-sway-gsd
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-inputd,
+  regolith-powerd,
+  regolith-displayd,
+  regolith-wm-config
+Description: Configuration for providing functionality equivalent
+  to gnome-settings-daemon.
+
+Package: regolith-sway-media-keys
+Architecture: any
+Depends: ${misc:Depends},
+  playerctl,
+  regolith-avizo,
+  regolith-wm-config
+Description: Configuration for providing media key functionality
+
+Package: regolith-sway-i3status-rs
+Architecture: any
+Depends: ${misc:Depends},
+    i3status-rs,
+    regolith-wm-config
+Description: Configuration for providing media key functionality
+
+Package: regolith-sway-background
+Architecture: any
+Depends: ${misc:Depends},
+    libxml2-utils,
+    file,
+    jq,
+    trawlcat,
+    regolith-wm-config
+Description: Configuration for providing media key functionality
+
+
+Package: regolith-sway-polkit
+Architecture: any
+Depends: ${misc:Depends},
+    policykit-1-gnome,
+    regolith-wm-config
+Description: Configuration for providing media key functionality
+
+Package: regolith-sway-gtklock
+Architecture: any
+Depends: ${misc:Depends},
+    gtklock,
+    trawlcat,
+    regolith-wm-config,
+Description: Configuration for using gtklock as the default locker
+

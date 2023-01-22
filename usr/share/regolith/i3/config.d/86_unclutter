@@ -1,0 +1,3 @@
+# Hide the mouse pointer if unused for a duration
+set_from_resource $wm.program.unclutter wm.program.unclutter /usr/bin/unclutter -b
+exec --no-startup-id $wm.program.unclutter

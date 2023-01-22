@@ -1,0 +1,26 @@
+set_from_resource $rofiTheme rofi.theme /usr/share/regolith-look/minimal/rofi.rasi
+
+## Launch // Application // <> Space ##
+set_from_resource $wm.binding.launcher.app wm.binding.launcher.app space
+set_from_resource $wm.program.launcher.app wm.program.launcher.app rofi -show drun -theme $rofiTheme
+bindsym $mod+$wm.binding.launcher.app exec $wm.program.launcher.app
+
+## Launch // Command // <><Shift> Space ##
+set_from_resource $wm.binding.launcher.cmd wm.binding.launcher.cmd Shift+space
+set_from_resource $wm.program.launcher.cmd wm.program.launcher.cmd rofi -show run -theme $rofiTheme
+bindsym $mod+$wm.binding.launcher.cmd exec $wm.program.launcher.cmd
+
+## Navigate // Window by Name // <><Ctrl> Space ##
+set_from_resource $wm.binding.launcher.window wm.binding.launcher.window Ctrl+space
+set_from_resource $wm.program.launcher.window wm.program.launcher.window rofi -show window -theme $rofiTheme
+bindsym $mod+$wm.binding.launcher.window exec $wm.program.launcher.window
+
+## Launch // File Search // <><Alt> Space ##
+set_from_resource $wm.binding.file_search wm.binding.file_search space
+set_from_resource $wm.program.file_search wm.program.file_search rofi -show find -modi find:/usr/share/rofi/modi/finder.sh
+bindsym $mod+$alt+$wm.binding.file_search exec $wm.program.file_search
+
+## Launch // Look Selector // <><Alt> l ##
+set_from_resource $wm.binding.look_selector wm.binding.look_selector l
+set_from_resource $wm.program.look_selector wm.program.look_selector rofi -show look -modi look:/usr/share/rofi/modi/look-selector.sh
+bindsym $mod+$alt+$wm.binding.look_selector exec $wm.program.look_selector

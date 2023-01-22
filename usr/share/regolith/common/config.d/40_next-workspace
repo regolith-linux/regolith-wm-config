@@ -1,0 +1,11 @@
+## Navigate // Next Free Workspace // <> ` ##
+set_from_resource $wm.binding.next_free wm.binding.next_free grave
+bindsym $mod+$wm.binding.next_free exec --no-startup-id /usr/bin/i3-next-workspace
+
+## Modify // Move Window to Next Free Workspace // <><Shift> ` ##
+set_from_resource $wm.binding.move_next_free wm.binding.move_next_free Shift+grave
+bindsym $mod+$wm.binding.move_next_free exec --no-startup-id /usr/bin/i3-next-workspace --move-window
+
+## Modify // Carry Window to Next Free Workspace // <><Alt> ` ##
+set_from_resource $wm.binding.take_next_free wm.binding.take_next_free grave
+bindsym $mod+$alt+$wm.binding.take_next_free exec --no-startup-id /usr/bin/i3-next-workspace --move-window-and-follow
