@@ -1,3 +1,9 @@
+regolith-wm-config (1.0.0-2) focal; urgency=medium
+
+  * Remove regolith-wm-session dependency from regolith-wm-config binary package
+
+ -- soumyarp <soumyaranjan1812@gmail.com>  Mon, 30 Jan 2023 16:36:40 +0530
+
 regolith-wm-config (1.0.0-1) jammy; urgency=medium
 
   * Initial release
