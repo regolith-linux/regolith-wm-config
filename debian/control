@@ -17,7 +17,6 @@ Recommends: regolith-wm-base-launchers,
   regolith-wm-networkmanager,
   regolith-wm-next-workspace,
   regolith-wm-resize,
-  regolith-wm-session,
   regolith-wm-workspace-config
 Conflicts: regolith-i3-config, regolith-sway-config
 Replaces: regolith-i3-config, regolith-sway-config
