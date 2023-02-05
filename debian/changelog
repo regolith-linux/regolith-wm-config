@@ -1,3 +1,9 @@
+regolith-wm-config (4.0.0-1) jammy; urgency=medium
+
+  * Initial release
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Mon, 06 Feb 2023 03:53:02 +0530
+
 regolith-wm-config (1.0.0-1) jammy; urgency=medium
 
   * Initial release
