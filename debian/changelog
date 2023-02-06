@@ -1,3 +1,9 @@
+regolith-wm-config (4.0.0-1) jammy; urgency=medium
+
+  * Update version to increase package precedance
+
+ -- soumyarp <soumyaranjan1812@gmail.com>  Mon, 6 Feb 2023 22:04:02 +0530
+
 regolith-wm-config (1.0.0-3) jammy; urgency=medium
 
   * Replace source package regolith-i3-config with regolith-wm-config
