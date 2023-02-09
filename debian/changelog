@@ -1,3 +1,10 @@
+regolith-wm-config (4.0.0-1ubuntu1) UNRELEASED; urgency=medium
+
+  * removed self-conflict and self-replace for regolith-wm-control-center
+  * Add locked flag to some keybindings
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Thu, 09 Feb 2023 14:26:55 +0530
+
 regolith-wm-config (4.0.0-1) jammy; urgency=medium
 
   * Update version to increase package precedance
