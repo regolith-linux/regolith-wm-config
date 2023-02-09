@@ -50,8 +50,9 @@ Depends: ${misc:Depends},
   regolith-sway-screensharing,
   regolith-sway-gsd,
   regolith-sway-background,
+  regolith-sway-media-keys,
   regolith-sway-session
-Recommends: regolith-i3-control-center-regolith,
+Recommends: regolith-sway-control-center-regolith,
   regolith-sway-media-keys,
   regolith-sway-i3status-rs,
   regolith-sway-unclutter
@@ -168,8 +169,8 @@ Depends: ${misc:Depends},
   regolith-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-control-center, regolith-wm-gnome
-Replaces: regolith-wm-control-center, regolith-wm-gnome
+Conflicts: regolith-wm-gnome
+Replaces: regolith-wm-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
 
@@ -180,8 +181,8 @@ Depends: ${misc:Depends},
   regolith-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-control-center, regolith-wm-gnome
-Replaces: regolith-wm-control-center, regolith-wm-gnome
+Conflicts: regolith-wm-gnome
+Replaces: regolith-wm-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
 
@@ -192,8 +193,8 @@ Depends: ${misc:Depends},
   gnome-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-control-center, regolith-wm-gnome
-Replaces: regolith-wm-control-center, regolith-wm-gnome
+Conflicts: regolith-wm-gnome
+Replaces: regolith-wm-gnome
 Description: gnome integrations for system management
  Launch gnome settings app for system management.
 
