@@ -43,4 +43,4 @@ bindsym $mod+$wm.binding.shutdown exec $sway.prompt.shutdown
 ## Session // Sleep // <><Shift> s ##
 set_from_resource $wm.binding.sleep wm.binding.sleep Shift+s
 set_from_resource $wm.program.sleep wm.program.sleep systemctl suspend
-bindsym $mod+$wm.binding.sleep exec $wm.program.sleep
+bindsym --locked $mod+$wm.binding.sleep exec $wm.program.sleep
