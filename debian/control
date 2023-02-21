@@ -52,6 +52,7 @@ Depends: ${misc:Depends},
   regolith-sway-default-style,
   regolith-sway-screensharing,
   regolith-sway-gsd,
+  regolith-sway-audio-idle-inhibit,
   regolith-sway-background,
   regolith-sway-media-keys,
   regolith-sway-session
@@ -320,4 +321,11 @@ Depends: ${misc:Depends},
     trawlcat,
     regolith-wm-config,
 Description: Configuration for using gtklock as the default locker
+
+Package: regolith-sway-audio-idle-inhibit
+Architecture: any
+Depends: ${misc:Depends},
+    sway-audio-idle-inhibit,
+    regolith-wm-config
+Description: Prevent sway from entering idle state if audio is playing
 
