@@ -1,9 +1,14 @@
-regolith-wm-config (4.0.0-1ubuntu1) UNRELEASED; urgency=medium
+regolith-wm-config (4.0.1-1) jammy; urgency=medium
 
+  [ Soumya Ranjan Patnaik ]
   * removed self-conflict and self-replace for regolith-wm-control-center
   * Add locked flag to some keybindings
+  * Removed redundant variable initialization
 
- -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Thu, 09 Feb 2023 14:26:55 +0530
+  [ Regolith Linux ]
+  * Add expected packages to recommends
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 25 Feb 2023 06:13:39 -0800
 
 regolith-wm-config (4.0.0-1) jammy; urgency=medium
 
