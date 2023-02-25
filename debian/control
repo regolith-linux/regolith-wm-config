@@ -23,8 +23,8 @@ Recommends:
   regolith-wm-networkmanager,
   regolith-wm-next-workspace,
   regolith-wm-resize,
+  regolith-wm-rofication-ilia,
   regolith-wm-workspace-config
-regolith-wm-rofication-ilia
 Conflicts: regolith-i3-config, regolith-sway-config
 Replaces: regolith-i3-config, regolith-sway-config
 Description: Regolith window manager config file
