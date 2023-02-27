@@ -1,3 +1,8 @@
+regolith-wm-config (4.0.2-1) jammy; urgency=medium
+  * Added config for regolith-sway-audio-idle-inhibit
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Mon, 27 Feb 2023 17:02:26 +0530
+
 regolith-wm-config (4.0.1-1) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
