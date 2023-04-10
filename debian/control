@@ -53,6 +53,7 @@ Depends: ${misc:Depends},
   regolith-sway-background,
   regolith-sway-media-keys,
   regolith-sway-gtklock,
+  regolith-sway-polkit,
   regolith-sway-session
 Recommends: regolith-sway-control-center-regolith,
   regolith-sway-media-keys,
