@@ -1,3 +1,9 @@
+regolith-wm-config (4.0.2-4) jammy; urgency=medium
+
+  * Add regolith-sway-polkit to depends
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Tue, 11 Apr 2023 04:32:15 +0530
+
 regolith-wm-config (4.0.2-3) jammy; urgency=medium
 
   * Fix gtklock binding not working when wallpaper not set
