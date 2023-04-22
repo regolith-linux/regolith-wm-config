@@ -56,7 +56,7 @@ bindsym $mod+$wm.binding.fullscreen_toggle fullscreen toggle
 
 ## Modify // Window Floating Toggle // <><Shift> f ##
 set_from_resource $wm.binding.float_toggle wm.binding.float_toggle Shift+f
-bindsym $mod+Shift+$wm.binding.float_toggle floating toggle
+bindsym $mod+$wm.binding.float_toggle floating toggle
 
 ## Modify // Move to Scratchpad // <><Ctrl> m ##
 set_from_resource $wm.binding.move_scratchpad wm.binding.move_scratchpad Ctrl+m
