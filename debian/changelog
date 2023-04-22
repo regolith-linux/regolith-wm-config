@@ -1,3 +1,9 @@
+regolith-wm-config (4.0.2-5) jammy; urgency=medium
+
+  * fix: XF86AudioPrev didnt play the previous track
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Sat, 22 Apr 2023 18:37:39 +0530
+
 regolith-wm-config (4.0.2-4) jammy; urgency=medium
 
   * Add regolith-sway-polkit to depends
