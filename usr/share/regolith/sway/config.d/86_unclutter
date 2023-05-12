@@ -1,4 +1,5 @@
 # Hide the mouse pointer if unused for a duration
 set_from_resource $wm.hide_cursor.timout wm.hide_cursor.timout 5000
 set_from_resource $wm.hide_cursor.show_when_typing wm.hide_cursor.show_when_typing enable
-seat * hide_cursor $wm.hide_cursor.timout when-typing $wm.hide_cursor.show_when_typing
+seat * hide_cursor $wm.hide_cursor.timout 
+seat * hide_cursor when-typing $wm.hide_cursor.show_when_typing
