@@ -328,3 +328,9 @@ Depends: ${misc:Depends},
     regolith-wm-config
 Description: Prevent sway from entering idle state if audio is playing
 
+Package: regolith-sway-unclutter
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+Description: Hide the mouse cursor if not used
+ Launches unclutter upon start to hide mouse when not in use.
