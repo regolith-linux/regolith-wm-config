@@ -1,3 +1,9 @@
+regolith-wm-config (4.0.2-7) jammy; urgency=medium
+
+  * fix: add missing control entry for regolith-sway-unclutter
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Sat, 13 May 2023 01:17:44 +0530
+
 regolith-wm-config (4.0.2-6) jammy; urgency=medium
 
   * fix: add missing .install file for regolith-sway-unclutter
