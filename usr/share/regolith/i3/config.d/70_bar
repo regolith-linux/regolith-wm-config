@@ -16,7 +16,7 @@ set_from_resource $wm.bar.mode wm.bar.mode dock
 set_from_resource $wm.bar.workspace_min_width wm.bar.workspace_min_width 36
 
 # i3xrocks config file. Override this for a custom status bar generator.
-set_from_resource $wm.bar.status_command wm.bar.status_command i3xrocks -u ~/.config/regolith2/i3xrocks/conf.d -d /usr/share/i3xrocks/conf.d
+set_from_resource $wm.bar.status_command wm.bar.status_command i3xrocks -u ~/.config/regolith3/i3xrocks/conf.d -d /usr/share/i3xrocks/conf.d
 
 # The bar configuration
 bar {

@@ -160,4 +160,4 @@ include /usr/share/regolith/common/config.d/*
 include /usr/share/regolith/sway/config.d/*
 
 # Include any user wm partials
-include $HOME/.config/regolith2/sway/config.d/*
+include $HOME/.config/regolith3/sway/config.d/*
