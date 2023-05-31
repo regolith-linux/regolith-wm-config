@@ -1,3 +1,9 @@
+regolith-wm-config (4.1.0-2) jammy; urgency=medium
+
+  * chore: move i3status-rs default config to i3status package
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Wed, 31 May 2023 15:42:30 +0530
+
 regolith-wm-config (4.1.0-1) jammy; urgency=medium
 
   * use regolith3 for user config directory due to MVB
