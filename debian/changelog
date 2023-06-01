@@ -1,8 +1,9 @@
 regolith-wm-config (4.1.0-2) jammy; urgency=medium
 
+  [ Soumya Ranjan Patnaik ]
   * chore: move i3status-rs default config to i3status package
 
- -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Wed, 31 May 2023 15:42:30 +0530
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 31 May 2023 22:07:22 -0700
 
 regolith-wm-config (4.1.0-1) jammy; urgency=medium
 
