@@ -1,3 +1,9 @@
+regolith-wm-config (4.1.0-3) jammy; urgency=medium
+
+  * fix:  missing .install for binary package regolith-sway-audio-idle-inhibit
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Wed, 14 Jun 2023 01:44:14 +0530
+
 regolith-wm-config (4.1.0-2) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
