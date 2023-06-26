@@ -1,3 +1,10 @@
+regolith-wm-config (4.1.0-3ubuntu1) UNRELEASED; urgency=medium
+
+  * fix(regolith-desktop/#866): incorrect path for i3 user config directory
+  * feat: add common directory for shared configs between i3 and sway
+
+ -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Mon, 26 Jun 2023 18:54:54 +0530
+
 regolith-wm-config (4.1.0-3) jammy; urgency=medium
 
   * fix:  missing .install for binary package regolith-sway-audio-idle-inhibit
