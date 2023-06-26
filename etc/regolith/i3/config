@@ -136,5 +136,8 @@ include /usr/share/regolith/common/config.d/*
 # Include any regolith i3 partials
 include /usr/share/regolith/i3/config.d/*
 
+# Include any partials common between i3 and sway sessions
+include $HOME/.config/regolith3/common/config.d/*
+
 # Include any user i3 partials
 include $HOME/.config/regolith3/i3/config.d/*
