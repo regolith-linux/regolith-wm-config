@@ -136,5 +136,5 @@ include /usr/share/regolith/common/config.d/*
 # Include any regolith i3 partials
 include /usr/share/regolith/i3/config.d/*
 
-# Include any user wm partials
-include $HOME/.config/regolith3/wm/config.d/*
+# Include any user i3 partials
+include $HOME/.config/regolith3/i3/config.d/*
