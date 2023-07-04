@@ -1,9 +1,10 @@
-regolith-wm-config (4.1.0-3ubuntu1) UNRELEASED; urgency=medium
+regolith-wm-config (4.1.1) jammy; urgency=medium
 
+  [ Soumya Ranjan Patnaik ]
   * fix(regolith-desktop/#866): incorrect path for i3 user config directory
   * feat: add common directory for shared configs between i3 and sway
 
- -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Mon, 26 Jun 2023 18:54:54 +0530
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 04 Jul 2023 09:02:26 -0700
 
 regolith-wm-config (4.1.0-3) jammy; urgency=medium
 
