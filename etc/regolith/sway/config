@@ -159,5 +159,8 @@ include /usr/share/regolith/common/config.d/*
 # Include any regolith sway partials
 include /usr/share/regolith/sway/config.d/*
 
+# Include any partials common between i3 and sway sessions
+include $HOME/.config/regolith3/common/config.d/*
+
 # Include any user wm partials
 include $HOME/.config/regolith3/sway/config.d/*
