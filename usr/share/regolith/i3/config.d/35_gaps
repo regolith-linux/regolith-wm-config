@@ -1,0 +1,29 @@
+###############################################################################
+# gaps Window Resize
+###############################################################################
+
+## Resize // Window Gaps // <> + - ##
+set_from_resource $wm.binding.inc_gaps wm.binding.inc_gaps plus
+set_from_resource $wm.binding.dec_gaps wm.binding.dec_gaps minus
+bindsym $mod+$wm.binding.dec_gaps gaps inner current minus 6
+bindsym $mod+$wm.binding.inc_gaps gaps inner current plus 6
+
+## Resize // Big Window Gaps // <><Shift> + - ##
+set_from_resource $wm.binding.inc_gaps_big wm.binding.inc_gaps_big Shift+plus
+set_from_resource $wm.binding.dec_gaps_big wm.binding.dec_gaps_big Shift+minus
+bindsym $mod+$wm.binding.dec_gaps_big gaps inner current minus 12
+bindsym $mod+$wm.binding.inc_gaps_big gaps inner current plus 12
+
+###############################################################################
+# gaps Appearance and Behavior
+###############################################################################
+
+# Specify the distance between windows in pixels
+set_from_resource $wm.gaps.inner.size wm.gaps.inner.size 5
+set_from_resource $wm.gaps.outer.size wm.gaps.outer.size 0
+gaps inner $wm.gaps.inner.size
+gaps outer $wm.gaps.outer.size
+
+# Only enable gaps on a workspace when there is at least one container
+set_from_resource $wm.gaps.smart wm.gaps.smart on
+smart_gaps $wm.gaps.smart
