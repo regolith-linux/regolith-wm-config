@@ -15,7 +15,6 @@ Depends: ${misc:Depends},
 Recommends:
   regolith-wm-base-launchers,
   regolith-wm-ftue,
-  regolith-wm-ilia,
   regolith-wm-navigation,
   regolith-wm-networkmanager,
   regolith-wm-next-workspace,
@@ -36,7 +35,9 @@ Depends: ${misc:Depends},
 Recommends: regolith-i3-compositor,
   regolith-i3-control-center-regolith,
   regolith-i3-i3xrocks,
-  regolith-i3-unclutter
+  regolith-i3-unclutter,
+  regolith-i3-ilia,
+  regolith-i3-gaps
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -58,7 +59,9 @@ Depends: ${misc:Depends},
 Recommends: regolith-sway-control-center-regolith,
   regolith-sway-media-keys,
   regolith-sway-i3status-rs,
-  regolith-sway-unclutter
+  regolith-sway-unclutter,
+  regolith-sway-ilia,
+  regolith-sway-gaps
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
 
@@ -131,16 +134,25 @@ Depends: ${misc:Depends},
   rofi,
   regolith-wm-config,
   regolith-rofi-config
-Conflicts: regolith-wm-ilia
+Conflicts: regolith-i3-ilia
 Description: Global menu system
  Legacy Rofi support
 
-Package: regolith-wm-ilia
+Package: regolith-i3-ilia
 Architecture: any
 Depends: ${misc:Depends},
   ilia,
   regolith-wm-config
 Conflicts: regolith-wm-remontoire, regolith-i3-rofi
+Description: Desktop executor
+ Manage apps, commands, notifications, keybindings, and
+ windows with this utility.
+
+Package: regolith-sway-ilia
+Architecture: any
+Depends: ${misc:Depends},
+  ilia,
+  regolith-wm-config
 Description: Desktop executor
  Manage apps, commands, notifications, keybindings, and
  windows with this utility.
@@ -334,3 +346,9 @@ Depends: ${misc:Depends},
   regolith-wm-config,
 Description: Hide the mouse cursor if not used
  Launches unclutter upon start to hide mouse when not in use.
+
+Package: regolith-sway-gaps
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+Description: Configurations to increase or decrease gaps in sway
