@@ -143,7 +143,7 @@ Architecture: any
 Depends: ${misc:Depends},
   ilia,
   regolith-wm-config
-Conflicts: regolith-wm-remontoire, regolith-i3-rofi
+Conflicts: regolith-wm-remontoire, regolith-i3-rofi, regolith-wm-ilia
 Description: Desktop executor
  Manage apps, commands, notifications, keybindings, and
  windows with this utility.
@@ -153,6 +153,7 @@ Architecture: any
 Depends: ${misc:Depends},
   ilia,
   regolith-wm-config
+Conflicts: regolith-wm-ilia
 Description: Desktop executor
  Manage apps, commands, notifications, keybindings, and
  windows with this utility.
