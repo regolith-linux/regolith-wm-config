@@ -9,7 +9,7 @@ Homepage: https://github.com/regolith-linux/regolith-wm-gaps-config
 Package: regolith-wm-config
 Architecture: any
 Depends: ${misc:Depends},
-  i3-wm (>= 4.20) | i3-gaps-wm (>=4.20) | sway-regolith,
+  i3-wm (>= 4.20) | sway-regolith,
   xdg-utils,
   xdotool
 Recommends:
