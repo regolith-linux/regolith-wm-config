@@ -348,6 +348,12 @@ Depends: ${misc:Depends},
 Description: Hide the mouse cursor if not used
  Launches unclutter upon start to hide mouse when not in use.
 
+Package: regolith-i3-gaps
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+Description: Configurations to increase or decrease gaps in i3
+
 Package: regolith-sway-gaps
 Architecture: any
 Depends: ${misc:Depends},
