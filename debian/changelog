@@ -1,3 +1,39 @@
+regolith-wm-config (4.1.5) jammy; urgency=medium
+
+  * fix: add i3 gaps to debian control
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 02 Aug 2023 20:20:54 -0700
+
+regolith-wm-config (4.1.4) jammy; urgency=medium
+
+  * Remove deprecated dependency i3-gaps
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 01 Aug 2023 06:58:11 -0700
+
+regolith-wm-config (4.1.3) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix: add missing package declaration in control
+
+  [ Regolith Linux ]
+  * Fix conflict between deprecated regolith-wm-ilia and wm specific updates
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Thu, 27 Jul 2023 08:29:01 -0700
+
+regolith-wm-config (4.1.2) jammy; urgency=medium
+
+  * fix: use 'bindsym --to-code' on sway for more consistent key mapping behavior with i3
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 22 Jul 2023 10:13:08 -0700
+
+regolith-wm-config (4.1.1) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix(regolith-desktop/#866): incorrect path for i3 user config directory
+  * feat: add common directory for shared configs between i3 and sway
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 04 Jul 2023 09:02:26 -0700
+
 regolith-wm-config (4.1.0-3) jammy; urgency=medium
 
   * fix:  missing .install for binary package regolith-sway-audio-idle-inhibit
