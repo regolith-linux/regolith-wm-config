@@ -12,7 +12,10 @@ bindsym XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
 bindsym XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
 
 # Player Controls
-bindsym --locked XF86AudioPlay exec playerctl play-pause
+# The keycodes 172 and 208 are both bound to XF86AudioPlay but have different meanings
+bindcode --locked 172 exec playerctl play-pause
+bindcode --locked 208 exec playerctl play
+bindsym --locked XF86AudioPause exec playerctl pause   
 bindsym --locked XF86AudioNext exec playerctl next
 bindsym --locked XF86AudioPrev exec playerctl previous
 
