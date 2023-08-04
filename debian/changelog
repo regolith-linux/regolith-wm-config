@@ -1,3 +1,11 @@
+regolith-wm-config (4.1.6) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * chore: update homepage
+  * fix: inconsistent behavious of XF86AudioPlay
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Thu, 03 Aug 2023 20:51:17 -0700
+
 regolith-wm-config (4.1.5) jammy; urgency=medium
 
   * fix: add i3 gaps to debian control
