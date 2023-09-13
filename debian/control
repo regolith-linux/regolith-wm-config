@@ -45,7 +45,6 @@ Package: regolith-sway-root-config
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  regolith-wm-rofication-ilia,
   regolith-sway-dbus-activation,
   regolith-sway-default-style,
   regolith-sway-screensharing,
