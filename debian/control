@@ -30,14 +30,14 @@ Package: regolith-i3-root-config
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  regolith-i3-default-style,
   regolith-i3-session
 Recommends: regolith-i3-compositor,
   regolith-i3-control-center-regolith,
-  regolith-i3-i3xrocks,
-  regolith-i3-unclutter,
-  regolith-i3-ilia,
+  regolith-i3-default-style,
   regolith-i3-gaps
+  regolith-i3-i3xrocks,
+  regolith-i3-ilia,
+  regolith-i3-unclutter,
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -45,23 +45,22 @@ Package: regolith-sway-root-config
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  regolith-wm-rofication-ilia,
   regolith-sway-dbus-activation,
-  regolith-sway-default-style,
   regolith-sway-screensharing,
   regolith-sway-gsd,
-  regolith-sway-audio-idle-inhibit,
   regolith-sway-background,
   regolith-sway-media-keys,
-  regolith-sway-gtklock,
   regolith-sway-polkit,
   regolith-sway-session
-Recommends: regolith-sway-control-center-regolith,
-  regolith-sway-media-keys,
-  regolith-sway-i3status-rs,
-  regolith-sway-unclutter,
-  regolith-sway-ilia,
+Recommends: regolith-sway-audio-idle-inhibit,
+  regolith-sway-control-center-regolith,
+  regolith-sway-default-style,
   regolith-sway-gaps
+  regolith-sway-gtklock,
+  regolith-sway-i3status-rs,
+  regolith-sway-ilia,
+  regolith-sway-media-keys,
+  regolith-sway-unclutter,
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
 
