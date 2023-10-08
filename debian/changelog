@@ -1,3 +1,10 @@
+regolith-wm-config (4.1.7) jammy; urgency=medium
+
+  * fix: remove (redundant) hard dependency from sway session to rofication. Soft dependency comes via regolith-wm-config.
+  * Move default-style to soft dep for both sessions.  demote 3 more for sway session to soft per PR feedback
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sun, 08 Oct 2023 08:24:48 -0700
+
 regolith-wm-config (4.1.6) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
