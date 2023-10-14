@@ -4,7 +4,8 @@
 
 ## Launch // Terminal // <> Enter ##
 set_from_resource $wm.binding.terminal wm.binding.terminal Return
-bindsym $mod+$wm.binding.terminal exec --no-startup-id /usr/bin/x-terminal-emulator
+set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/x-terminal-emulator
+bindsym $mod+$wm.binding.terminal exec --no-startup-id $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
 set_from_resource $wm.binding.browser wm.binding.browser Shift+Return
