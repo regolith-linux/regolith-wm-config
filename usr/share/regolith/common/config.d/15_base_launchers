@@ -9,4 +9,5 @@ bindsym $mod+$wm.binding.terminal exec --no-startup-id $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
 set_from_resource $wm.binding.browser wm.binding.browser Shift+Return
-bindsym $mod+$wm.binding.browser exec --no-startup-id gtk-launch $(xdg-settings get default-web-browser)
+set_from_resource $wm.program.browser wm.program.browser gtk-launch $(xdg-settings get default-web-browser)
+bindsym $mod+$wm.binding.browser exec --no-startup-id $wm.program.browser
