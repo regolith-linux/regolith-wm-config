@@ -1,3 +1,14 @@
+regolith-wm-config (4.2.0) jammy; urgency=medium
+
+  [ Regolith Linux ]
+  * fix: typo
+
+  [ Jérôme LOYET ]
+  * [15_base_launchers] add vm.program.terminal
+  * [15_base_launchers] add vm.program.browser
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sun, 15 Oct 2023 09:05:05 -0700
+
 regolith-wm-config (4.1.7) jammy; urgency=medium
 
   * fix: remove (redundant) hard dependency from sway session to rofication. Soft dependency comes via regolith-wm-config.
