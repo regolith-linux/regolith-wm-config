@@ -221,6 +221,14 @@ Depends: ${misc:Depends},
 Description: easy i3 workspace creation
  Automatically determine unused workspace to move to.
 
+Package: regolith-sway-next-workspace
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  childe
+Description: easy Sway workspace creation
+ Automatically determine unused workspace to move to.
+
 Package: regolith-wm-swap-focus
 Architecture: any
 Depends: ${misc:Depends},
