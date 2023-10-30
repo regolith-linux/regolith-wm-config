@@ -213,11 +213,13 @@ Replaces: regolith-wm-gnome
 Description: gnome integrations for system management
  Launch gnome settings app for system management.
 
-Package: regolith-wm-next-workspace
+Package: regolith-i3-next-workspace
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
   i3-next-workspace
+Replaces: regolith-wm-next-workspace
+Conflicts: regolith-wm-next-workspace
 Description: easy i3 workspace creation
  Automatically determine unused workspace to move to.
 

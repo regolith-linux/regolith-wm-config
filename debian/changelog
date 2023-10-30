@@ -1,3 +1,9 @@
+regolith-wm-config (4.3.1) jammy; urgency=medium
+
+  * fix: properly segment i3 and say versions of next-workspace partial
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 30 Oct 2023 12:43:31 -0700
+
 regolith-wm-config (4.3.0) jammy; urgency=medium
 
   * feat: add next-workspace feature to sway session, copied from x11 i3-next-workspace
