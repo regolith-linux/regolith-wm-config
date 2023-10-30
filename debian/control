@@ -21,7 +21,7 @@ Recommends:
   regolith-wm-resize,
   regolith-wm-rofication-ilia,
   regolith-wm-workspace-config
-Conflicts: regolith-i3-config, regolith-sway-config
+Conflicts: regolith-i3-config, regolith-sway-config, regolith-wm-next-workspace
 Replaces: regolith-i3-config, regolith-sway-config
 Description: Regolith window manager config file
  This is the i3 config file for the Regolith desktop environment.

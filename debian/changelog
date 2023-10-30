@@ -1,3 +1,9 @@
+regolith-wm-config (4.3.1-2) jammy; urgency=medium
+
+  * fix: prevent broken legacy package from remaining installed for next-workspace
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 30 Oct 2023 13:06:19 -0700
+
 regolith-wm-config (4.3.1) jammy; urgency=medium
 
   * fix: properly segment i3 and say versions of next-workspace partial
