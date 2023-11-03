@@ -146,9 +146,6 @@ set_from_resource $wm.bar.workspace.urgent.text.color wm.bar.workspace.urgent.te
 set_from_resource $wm.font gtk.font_name Sans 13
 font pango:$wm.font
 
-# Set dbus activation environment vars (Needed for GTK apps to work properly)
-exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK
-
 ###############################################################################
 # WM Config Partials
 ###############################################################################
