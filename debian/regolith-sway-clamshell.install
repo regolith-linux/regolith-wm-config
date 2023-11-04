@@ -1,0 +1,2 @@
+scripts/regolith-sway-clamshell     usr/bin
+usr/share/regolith/sway/config.d/96_clamshell

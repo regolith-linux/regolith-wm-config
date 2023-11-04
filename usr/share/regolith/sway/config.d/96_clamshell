@@ -1,0 +1,3 @@
+# Resource name to override the builtin display connector: regolith.clamshell.display
+# Resource name to override the lid close action: regolith.clamshell.action
+exec_always regolith-sway-clamshell 
