@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-ACTION=$( trawlcat regolith.clamshell.action "DISABLE_OUTPUT" )
+ACTION=$( trawlcat wm.clamshell.action "DISABLE_OUTPUT" )
 
 
 case "$ACTION" in
   "DISABLE_OUTPUT") 
     DEFAULT_CLAMSHELL_CONNECTOR=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
-    CURRENT_CLAMSHELL_CONNECTOR=$( trawlcat regolith.clamshell.display $DEFAULT_CLAMSHELL_CONNECTOR )
+    CURRENT_CLAMSHELL_CONNECTOR=$( trawlcat wm.clamshell.display $DEFAULT_CLAMSHELL_CONNECTOR )
 
     if [[ -n $CURRENT_CLAMSHELL_CONNECTOR ]]; then
       swaymsg "bindswitch --locked lid:off output $CURRENT_CLAMSHELL_CONNECTOR enable"
