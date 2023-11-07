@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+ACTION=$( trawlcat wm.clamshell.action "DISABLE_OUTPUT" )
+
+
+case "$ACTION" in
+  "DISABLE_OUTPUT") 
+    DEFAULT_CLAMSHELL_CONNECTOR=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
+    CURRENT_CLAMSHELL_CONNECTOR=$( trawlcat wm.clamshell.display $DEFAULT_CLAMSHELL_CONNECTOR )
+
+    if [[ -n $CURRENT_CLAMSHELL_CONNECTOR ]]; then
+      swaymsg "bindswitch --locked lid:off output $CURRENT_CLAMSHELL_CONNECTOR enable"
+      swaymsg "bindswitch --locked lid:on output $CURRENT_CLAMSHELL_CONNECTOR disable"
+    fi
+    ;;
+
+  "SLEEP")
+    echo  $ACTION
+    swaymsg 'bindswitch --locked lid:on systemctl suspend'
+    ;;
+
+  "HIBERNATE")
+    echo  $ACTION
+    swaymsg 'bindswitch --locked lid:on systemctl hibernate'
+    ;;
+esac
+
