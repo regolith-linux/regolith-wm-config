@@ -1,3 +1,10 @@
+regolith-wm-config (4.4.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat: implement clamshell functionality for sway
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 07 Nov 2023 06:55:41 -0800
+
 regolith-wm-config (4.3.3) jammy; urgency=medium
 
   * fix: force removal of deprecated ilia integration package
