@@ -10,4 +10,3 @@ exec $wm.gsd.input
 
 # Workaround for rfkill not starting on gnome-session start
 exec --no-startup-id killall gsd-rfkill && /usr/libexec/gsd-rfkill
-
