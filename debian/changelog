@@ -1,3 +1,9 @@
+regolith-wm-config (4.4.1) jammy; urgency=medium
+
+  * fix: make all non-root config partials soft dependendencies for more flexibility
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Thu, 11 Jan 2024 17:41:57 -0800
+
 regolith-wm-config (4.4.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
