@@ -1,3 +1,11 @@
+regolith-wm-config (4.4.2) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix: gtklock config has resource names starting with i3-wm instead of wm
+  * fix: reference to i3 in sway configs
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 17 Jan 2024 18:47:28 -0800
+
 regolith-wm-config (4.4.1) jammy; urgency=medium
 
   * fix: make all non-root config partials soft dependendencies for more flexibility
