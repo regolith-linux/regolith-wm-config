@@ -1,3 +1,10 @@
+regolith-wm-config (4.4.3) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat: use mate-polkit instead of gnome-authentication-agent for polkit
+
+ -- Soumya Ranjan Patniak <soumyaranjan1812@gmail.com>  Fri, 19 Jan 2024 03:13:30 +0530
+
 regolith-wm-config (4.4.2) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
