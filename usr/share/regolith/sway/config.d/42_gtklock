@@ -1,4 +1,4 @@
 ## Session // Lock Screen // <> Escape ##
-set_from_resource $i3-wm.binding.lock i3-wm.binding.lock Escape
-set_from_resource $i3-wm.program.lock i3-wm.program.lock gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)
-bindsym $mod+$i3-wm.binding.lock exec $i3-wm.program.lock
+set_from_resource $wm.binding.lock wm.binding.lock Escape
+set_from_resource $wm.program.lock wm.program.lock gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)
+bindsym $mod+$wm.binding.lock exec $wm.program.lock
