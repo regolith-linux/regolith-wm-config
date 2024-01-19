@@ -335,7 +335,7 @@ Description: Configuration for providing media key functionality
 Package: regolith-sway-polkit
 Architecture: any
 Depends: ${misc:Depends},
-    policykit-1-gnome,
+    mate-polkit,
     regolith-wm-config
 Description: Configuration for providing media key functionality
 
