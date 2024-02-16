@@ -1,0 +1,1 @@
+exec env GDK_BACKEND=x11 mate-polkit
