@@ -1,1 +1,1 @@
-exec /usr/libexec/polkit-mate-authentication-agent-1
+exec mate-polkit
