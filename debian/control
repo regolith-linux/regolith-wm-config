@@ -335,8 +335,17 @@ Description: Configuration for providing media key functionality
 Package: regolith-sway-polkit
 Architecture: any
 Depends: ${misc:Depends},
-    mate-polkit,
+    mate-polkit-bin,
     regolith-wm-config
+Conflicts: regolith-sway-polkit-xwayland
+Description: Configuration for providing media key functionality
+
+Package: regolith-sway-polkit-xwayland
+Architecture: any
+Depends: ${misc:Depends},
+    mate-polkit-bin,
+    regolith-wm-config
+Conflicts: regolith-sway-polkit
 Description: Configuration for providing media key functionality
 
 Package: regolith-sway-gtklock
