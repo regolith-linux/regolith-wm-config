@@ -1,3 +1,11 @@
+regolith-wm-config (4.4.4) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix: mate polkit binary location is distribution dependant
+  * feat: add package for running mate polkit under xwayland
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 17 Feb 2024 08:42:23 -0800
+
 regolith-wm-config (4.4.3) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
