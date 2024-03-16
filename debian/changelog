@@ -1,3 +1,10 @@
+regolith-wm-config (4.4.5) jammy; urgency=medium
+
+  [ Arne Brutschy ]
+  * Fix Mediakeys binding to support muting the mic
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 16 Mar 2024 08:13:08 -0700
+
 regolith-wm-config (4.4.4) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
