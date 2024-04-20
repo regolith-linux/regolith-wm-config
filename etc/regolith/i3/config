@@ -141,3 +141,6 @@ include $HOME/.config/regolith3/common-wm/config.d/*
 
 # Include any user i3 partials
 include $HOME/.config/regolith3/i3/config.d/*
+
+# Notify systemd about successful session start
+exec systemd-notify --ready
