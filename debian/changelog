@@ -1,3 +1,9 @@
+regolith-wm-config (4.5.2) jammy; urgency=medium
+
+  * fix: remove redunant call to dbus-update-activation-environment
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sun, 21 Apr 2024 11:14:35 -0700
+
 regolith-wm-config (4.5.1) jammy; urgency=medium
 
   * fix: specify 'no-startup-id' to avoid waiting mouse cursor in X11, unclear of effect in sway, adding for consistency.
