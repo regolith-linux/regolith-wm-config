@@ -1,3 +1,10 @@
+regolith-wm-config (4.5.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat: notify systemd about successful session activation
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 20 Apr 2024 17:46:03 -0700
+
 regolith-wm-config (4.4.5) jammy; urgency=medium
 
   [ Arne Brutschy ]
