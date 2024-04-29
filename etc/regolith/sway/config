@@ -161,3 +161,6 @@ include $HOME/.config/regolith3/common-wm/config.d/*
 
 # Include any user wm partials
 include $HOME/.config/regolith3/sway/config.d/*
+
+# Notify systemd about successful session start
+exec --no-startup-id systemd-notify --ready
