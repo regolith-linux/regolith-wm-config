@@ -151,6 +151,12 @@ Description: Desktop executor
  Manage apps, commands, notifications, keybindings, and
  windows with this utility.
 
+Package: regolith-i3-dbus-activation
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Regolith dbus activation
+
 Package: regolith-sway-ilia
 Architecture: any
 Depends: ${misc:Depends},
