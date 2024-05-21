@@ -65,6 +65,7 @@ Recommends: regolith-sway-audio-idle-inhibit,
   regolith-sway-polkit,
   regolith-sway-screensharing,
   regolith-sway-session,
+  regolith-sway-kbd-layout,
   regolith-sway-unclutter
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
@@ -394,3 +395,9 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
 Description: Configurations to control lid close behaviour
+
+Package: regolith-sway-kbd-layout
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Keybindings to cycle between keyboard layotus
