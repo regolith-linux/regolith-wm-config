@@ -1,3 +1,12 @@
+regolith-wm-config (4.6.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix: import XDG_CURRENT_DESKTOP into systemd_environment to ensure correct portal config is selected
+  * chore: add packages for dbus-activation configs to Depends to ensure they're always installed with the session
+  * feat: add keybindings to cycle between keyboard layouts
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 22 May 2024 17:50:23 -0700
+
 regolith-wm-config (4.5.3) jammy; urgency=medium
 
   [ Regolith Linux ]
