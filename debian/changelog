@@ -1,3 +1,10 @@
+regolith-wm-config (4.6.1) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * chore: manually start regolith-wayland.target if session doesnt use systemd
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sun, 02 Jun 2024 10:51:11 -0700
+
 regolith-wm-config (4.6.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
