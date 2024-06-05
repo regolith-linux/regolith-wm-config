@@ -307,10 +307,10 @@ Description: Configuration for screensharing
 Package: regolith-sway-gsd
 Architecture: any
 Depends: ${misc:Depends},
-  regolith-inputd,
-  regolith-powerd,
-  regolith-displayd,
-  regolith-wm-config
+  regolith-inputd (>=0.3.0),
+  regolith-powerd (>=0.3.0),
+  regolith-displayd (>=0.3.0),
+  regolith-wm-config (>=4.6.1)
 Description: Configuration for providing functionality equivalent
   to gnome-settings-daemon.
 
