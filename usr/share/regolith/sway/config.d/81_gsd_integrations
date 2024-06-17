@@ -1,1 +1,1 @@
-exec_always systemctl restart regolith-init-kanshi.service
+exec_always systemctl restart --user regolith-init-kanshi.service
