@@ -1,3 +1,10 @@
+regolith-wm-config (4.8.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat: restart regolith-init-kanshi service as user
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 18 Jun 2024 07:01:47 -0700
+
 regolith-wm-config (4.7.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
