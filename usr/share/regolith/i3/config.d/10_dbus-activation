@@ -1,3 +1,3 @@
-exec systemctl --user import-environment XDG_CURRENT_DESKTOP DISPLAY I3SOCK
-exec hash dbus-update-activation-environment 2>/dev/null && \
+exec --no-startup-id systemctl --user import-environment XDG_CURRENT_DESKTOP DISPLAY I3SOCK
+exec --no-startup-id hash dbus-update-activation-environment 2>/dev/null && \
      dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP DISPLAY I3SOCK
