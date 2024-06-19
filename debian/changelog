@@ -1,3 +1,9 @@
+regolith-wm-config (4.8.1) jammy; urgency=medium
+
+  * fix: add exec flag to fix spinner mouse cursor not present upon desktop load on x11
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 19 Jun 2024 07:27:56 -0700
+
 regolith-wm-config (4.8.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
