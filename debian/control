@@ -66,6 +66,8 @@ Recommends: regolith-sway-audio-idle-inhibit,
   regolith-sway-screensharing,
   regolith-sway-session,
   regolith-sway-kbd-layout,
+  regolith-sway-clamshell,
+  regolith-sway-next-workspace,
   regolith-sway-unclutter
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
