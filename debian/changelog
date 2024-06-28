@@ -1,3 +1,10 @@
+regolith-wm-config (4.8.2) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * fix: add essential packages to recommends
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Thu, 27 Jun 2024 19:14:23 -0700
+
 regolith-wm-config (4.8.1) jammy; urgency=medium
 
   * fix: add exec flag to fix spinner mouse cursor not present upon desktop load on x11
