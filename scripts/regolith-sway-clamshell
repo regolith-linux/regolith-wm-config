@@ -1,27 +1,76 @@
 #!/usr/bin/env bash
 
-ACTION=$( trawlcat wm.clamshell.action "DISABLE_OUTPUT" )
+exit_with_error() {
+  echo "$1"
+  echo "Exiting..."
+  exit 1
+}
 
+INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
+
+# Early return if there is no inbuilt display
+if [[ -z $INBUILT_DISPLAY ]]; then
+  echo "No inbuilt display found. Exiting..."
+  exit 0
+fi
+
+# Determine the action to take based on whether an external display is connected
+DISPLAY_COUNT=$( swaymsg -t get_outputs --raw | jq 'length')
+CLAMSHELL_ENABLED=$( trawlcat wm.clamshell.enabled "true" )
+if [[ $DISPLAY_COUNT > 1 ]]; then
+  if [[ "$CLAMSHELL_ENABLED" == "true" ]]; then
+    echo "External display connected and clamshell mode enabled"
+    swaymsg "bindswitch --locked --reload lid:off output $INBUILT_DISPLAY enable"
+    swaymsg "bindswitch --locked --reload lid:on output $INBUILT_DISPLAY disable"
+    exit 0
+  elif [[ "$CLAMSHELL_ENABLED" == "false" ]]; then
+    echo "External display connected and clamshell mode disabled. Falling back to lid close action"
+  else
+    exit_with_error "Multiple displays connected but invalid or missing value for resource wm.clamshell.enabled"
+  fi
+fi
+
+echo "No external display is connected."
+
+if on_ac_power; then
+  echo "On AC Power. Using action from wm.lidclose.action.power"
+  ACTION=$( trawlcat wm.lidclose.action.power "SLEEP" )
+else
+  echo "On Battery. Using action from wm.lidclose.action.battery"
+  ACTION=$( trawlcat wm.lidclose.action.battery "SLEEP" )
+fi
+
+echo "Lid close action - $ACTION"
+
+# Actions to take based on the value of wm.lidclose.action
+DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
+SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
+HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
+SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
 
 case "$ACTION" in
-  "DISABLE_OUTPUT") 
-    DEFAULT_CLAMSHELL_CONNECTOR=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
-    CURRENT_CLAMSHELL_CONNECTOR=$( trawlcat wm.clamshell.display $DEFAULT_CLAMSHELL_CONNECTOR )
+  "DO_NOTHING")
+    swaymsg "bindswitch --locked --reload lid:on exec true"
+    ;;
 
-    if [[ -n $CURRENT_CLAMSHELL_CONNECTOR ]]; then
-      swaymsg "bindswitch --locked lid:off output $CURRENT_CLAMSHELL_CONNECTOR enable"
-      swaymsg "bindswitch --locked lid:on output $CURRENT_CLAMSHELL_CONNECTOR disable"
-    fi
+  "LOCK")
+    swaymsg "bindswitch --locked --reload lid:on exec $LOCK"
     ;;
 
   "SLEEP")
-    echo  $ACTION
-    swaymsg 'bindswitch --locked lid:on systemctl suspend'
+    swaymsg "bindswitch --locked --reload lid:on exec $SLEEP"
     ;;
 
   "HIBERNATE")
-    echo  $ACTION
-    swaymsg 'bindswitch --locked lid:on systemctl hibernate'
+    swaymsg "bindswitch --locked --reload lid:on exec $HIBERNATE"
     ;;
+
+  "SHUTDOWN")
+    swaymsg "bindswitch --locked --reload lid:on exec $SHUTDOWN"
+    ;;
+
+  *)
+    exit_with_error "Invalid or missing value for resource wm.lidclose.action"
 esac
 
