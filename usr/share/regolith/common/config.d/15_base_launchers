@@ -5,9 +5,9 @@
 ## Launch // Terminal // <> Enter ##
 set_from_resource $wm.binding.terminal wm.binding.terminal Return
 set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/x-terminal-emulator
-bindsym $mod+$wm.binding.terminal exec --no-startup-id $wm.program.terminal
+bindsym $mod+$wm.binding.terminal exec --no-startup-id systemd-run --user --scope $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
 set_from_resource $wm.binding.browser wm.binding.browser Shift+Return
 set_from_resource $wm.program.browser wm.program.browser gtk-launch $(xdg-settings get default-web-browser)
-bindsym $mod+$wm.binding.browser exec --no-startup-id $wm.program.browser
+bindsym $mod+$wm.binding.browser exec --no-startup-id systemd-run --user --scope $wm.program.browser
