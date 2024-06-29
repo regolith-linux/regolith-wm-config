@@ -395,7 +395,8 @@ Description: Configurations to increase or decrease gaps in sway
 Package: regolith-sway-clamshell
 Architecture: any
 Depends: ${misc:Depends},
-  regolith-wm-config
+  regolith-wm-config,
+  powermgmt-base
 Description: Configurations to control lid close behaviour
 
 Package: regolith-sway-kbd-layout
