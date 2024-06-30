@@ -1,3 +1,11 @@
+regolith-wm-config (4.9.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat: customise lid close behaviour based on system state
+  * feat: use systemd-run for terminal and browser
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 29 Jun 2024 17:02:18 -0700
+
 regolith-wm-config (4.8.2) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
