@@ -6,6 +6,40 @@ exit_with_error() {
   exit 1
 }
 
+get_action_cmd() {
+  # Actions to take based on the value of wm.lidclose.action
+  local DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+  local LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
+  local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
+  local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
+  local SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
+
+  case "$1" in
+    "DO_NOTHING")
+      echo "true"
+      ;;
+
+    "LOCK")
+      echo "$LOCK"
+      ;;
+
+    "SLEEP")
+      echo "$SLEEP"
+      ;;
+
+    "HIBERNATE")
+      echo "$HIBERNATE"
+      ;;
+
+    "SHUTDOWN")
+      echo "$SHUTDOWN"
+      ;;
+
+    *)
+      exit_with_error "Invalid or missing value for resource wm.lidclose.action"
+  esac
+}
+
 INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
 
 # Early return if there is no inbuilt display
@@ -32,45 +66,16 @@ fi
 
 echo "No external display is connected."
 
-if on_ac_power; then
-  echo "On AC Power. Using action from wm.lidclose.action.power"
-  ACTION=$( trawlcat wm.lidclose.action.power "SLEEP" )
-else
-  echo "On Battery. Using action from wm.lidclose.action.battery"
-  ACTION=$( trawlcat wm.lidclose.action.battery "SLEEP" )
-fi
 
-echo "Lid close action - $ACTION"
+AC_ACTION=$( trawlcat wm.lidclose.action.power "LOCK" )
+BATTERY_ACTION=$( trawlcat wm.lidclose.action.battery "SLEEP" )
+AC_ACTION_CMD=$( get_action_cmd "$AC_ACTION" )
+BATTERY_ACTION_CMD=$( get_action_cmd "$BATTERY_ACTION" )
+ACTION_CMD="bash -c \"if on_ac_power; then $AC_ACTION_CMD; else $BATTERY_ACTION_CMD; fi\""
 
-# Actions to take based on the value of wm.lidclose.action
-DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
-LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
-SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
-HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
-SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
+echo "Lid close action on Power - $AC_ACTION"
+echo "Lid close action on Battery- $BATTERY_ACTION"
 
-case "$ACTION" in
-  "DO_NOTHING")
-    swaymsg "bindswitch --locked --reload lid:on exec true"
-    ;;
 
-  "LOCK")
-    swaymsg "bindswitch --locked --reload lid:on exec $LOCK"
-    ;;
-
-  "SLEEP")
-    swaymsg "bindswitch --locked --reload lid:on exec $SLEEP"
-    ;;
-
-  "HIBERNATE")
-    swaymsg "bindswitch --locked --reload lid:on exec $HIBERNATE"
-    ;;
-
-  "SHUTDOWN")
-    swaymsg "bindswitch --locked --reload lid:on exec $SHUTDOWN"
-    ;;
-
-  *)
-    exit_with_error "Invalid or missing value for resource wm.lidclose.action"
-esac
-
+swaymsg "bindswitch --locked --reload lid:on exec '$ACTION_CMD'"
+swaymsg "bindswitch --locked --reload lid:off exec true"
