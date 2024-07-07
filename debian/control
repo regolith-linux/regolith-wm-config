@@ -68,6 +68,7 @@ Recommends: regolith-sway-audio-idle-inhibit,
   regolith-sway-kbd-layout,
   regolith-sway-clamshell,
   regolith-sway-next-workspace,
+  regolith-sway-touchpad-guestures,
   regolith-sway-unclutter
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
@@ -404,3 +405,9 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
 Description: Keybindings to cycle between keyboard layotus
+
+Package: regolith-sway-touchpad-guestures
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config
+Description: Configurations to enable touchpad gestures
