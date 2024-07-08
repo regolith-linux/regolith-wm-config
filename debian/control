@@ -411,3 +411,10 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
 Description: Configurations to enable touchpad gestures
+
+Package: regolith-sway-grimshot
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  grimshot
+Description: Enable window and screen captures

@@ -1,0 +1,11 @@
+## Session // Window Snapshot // <><Prtscr> ##
+set_from_resource $wm.binding.screenshot.window wm.binding.screenshot.window Print
+bindsym $mod+$wm.binding.screenshot.window exec grimshot copy active
+
+## Session // Screenshot // <><Shift><Prtscr> ##
+set_from_resource $wm.binding.screenshot wm.binding.screenshot Shift+Print
+bindsym $mod+$wm.binding.screenshot exec grimshot --notify savecopy anything
+
+## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
+set_from_resource $wm.binding.screenshot.all wm.binding.screenshot.all Shift+Ctrl+Print
+bindsym $mod+$wm.binding.screenshot.all exec grimshot --notify save screen
