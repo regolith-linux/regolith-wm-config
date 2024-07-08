@@ -1,3 +1,12 @@
+regolith-wm-config (4.10.0) jammy; urgency=medium
+
+  [ Soumya Ranjan Patnaik ]
+  * feat(sway): add touchpad gestures support
+  * fix: ensure lid action is applied as per current power state
+  * fix: ensure lid action is applied as per current power state
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 08 Jul 2024 12:59:19 -0700
+
 regolith-wm-config (4.9.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
