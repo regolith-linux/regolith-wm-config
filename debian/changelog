@@ -1,3 +1,9 @@
+regolith-wm-config (4.11.0) jammy; urgency=medium
+
+  * feat: add 3 bindings for window and screen grabs with grimshot
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 10 Jul 2024 07:41:48 -0700
+
 regolith-wm-config (4.10.0) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
