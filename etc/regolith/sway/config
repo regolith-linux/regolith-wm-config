@@ -147,6 +147,14 @@ set_from_resource $wm.font gtk.font_name Sans 13
 font pango:$wm.font
 
 ###############################################################################
+# Common Navigation Bindings
+###############################################################################
+set_from_resource $wm.binding.left wm.binding.left h
+set_from_resource $wm.binding.right wm.binding.right l
+set_from_resource $wm.binding.up wm.binding.up k
+set_from_resource $wm.binding.down wm.binding.down j
+
+###############################################################################
 # WM Config Partials
 ###############################################################################
 
