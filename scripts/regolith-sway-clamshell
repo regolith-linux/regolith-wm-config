@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# This script takes one argument, which is the ACTION_TYPE
+#
+# ACTION_TYPE can be one of the following:
+#   LID_OPEN - The script is called when the lid is opened
+#   LID_CLOSE - The script is called when the lid is closed
+#
+# Requirements for using clamshell mode:
+#   - wm.clamshell.enabled is set to true
+#   - An inbuilt display is found
+#   - More than one display is connected
+
+ACTION_TYPE=$1
+
 
 exit_with_error() {
   echo "$1"
@@ -6,9 +19,9 @@ exit_with_error() {
   exit 1
 }
 
-get_action_cmd() {
+get_lid_close_cmd() {
   # Actions to take based on the value of wm.lidclose.action
-  local DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+  local DEFAULT_LOCK="/usr/bin/gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
   local LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
   local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
   local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
@@ -40,42 +53,53 @@ get_action_cmd() {
   esac
 }
 
-INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
+handle_clamshell() {
+  if [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
+    echo "clamshell mode: Turning off inbuilt display for lid close"
+    swaymsg output "$INBUILT_DISPLAY" disable
+  elif [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
+    echo "clamshell mode: Turning on inbuilt display for lid open"
+    swaymsg output "$INBUILT_DISPLAY" enable
+  fi
+}
 
-# Early return if there is no inbuilt display
-if [[ -z $INBUILT_DISPLAY ]]; then
-  echo "No inbuilt display found. Exiting..."
-  exit 0
-fi
-
-# Determine the action to take based on whether an external display is connected
+DEFAULT_INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
+INBUILT_DISPLAY=$( trawlcat wm.clamshell.display "$DEFAULT_INBUILT_DISPLAY" )
 DISPLAY_COUNT=$( swaymsg -t get_outputs --raw | jq 'length')
 CLAMSHELL_ENABLED=$( trawlcat wm.clamshell.enabled "true" )
-if [[ $DISPLAY_COUNT > 1 ]]; then
-  if [[ "$CLAMSHELL_ENABLED" == "true" ]]; then
-    echo "External display connected and clamshell mode enabled"
-    swaymsg "bindswitch --locked --reload lid:off output $INBUILT_DISPLAY enable"
-    swaymsg "bindswitch --locked --reload lid:on output $INBUILT_DISPLAY disable"
-    exit 0
-  elif [[ "$CLAMSHELL_ENABLED" == "false" ]]; then
-    echo "External display connected and clamshell mode disabled. Falling back to lid close action"
-  else
-    exit_with_error "Multiple displays connected but invalid or missing value for resource wm.clamshell.enabled"
-  fi
-fi
-
-echo "No external display is connected."
-
-
 AC_ACTION=$( trawlcat wm.lidclose.action.power "LOCK" )
 BATTERY_ACTION=$( trawlcat wm.lidclose.action.battery "SLEEP" )
-AC_ACTION_CMD=$( get_action_cmd "$AC_ACTION" )
-BATTERY_ACTION_CMD=$( get_action_cmd "$BATTERY_ACTION" )
-ACTION_CMD="bash -c \"if on_ac_power; then $AC_ACTION_CMD; else $BATTERY_ACTION_CMD; fi\""
-
-echo "Lid close action on Power - $AC_ACTION"
-echo "Lid close action on Battery- $BATTERY_ACTION"
+AC_ACTION_CMD=$( get_lid_close_cmd "$AC_ACTION" )
+BATTERY_ACTION_CMD=$( get_lid_close_cmd "$BATTERY_ACTION" )
 
 
-swaymsg "bindswitch --locked --reload lid:on exec '$ACTION_CMD'"
-swaymsg "bindswitch --locked --reload lid:off exec true"
+if [[ $DISPLAY_COUNT > 1 ]]; then
+  if [[ -n $INBUILT_DISPLAY && "$CLAMSHELL_ENABLED" == "true" ]]; then
+    handle_clamshell
+    exit 0
+  elif [[ -n $INBUILT_DISPLAY && "$CLAMSHELL_ENABLED" == "false" ]]; then
+    echo "External display connected but clamshell mode is disabled"
+  elif [[ -z $INBUILT_DISPLAY ]]; then
+    echo "Inbuilt display not found."
+  else
+    exit_with_error "External display connected but invalid or missing value for resource wm.clamshell.enabled"
+  fi
+else
+  echo "No external display is connected."
+fi
+
+echo "Clamshell requirements not met. Executing lid close action."
+
+if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
+  echo "Turning on inbuilt display for lid open"
+  exec swaymsg output "$INBUILT_DISPLAY" enable
+fi
+
+if on_ac_power; then
+  echo "Executing lid close action on Power - $AC_ACTION"
+  exec $AC_ACTION_CMD
+else
+  echo "Executing lid close action on Battery- $BATTERY_ACTION"
+  exec $BATTERY_ACTION_CMD
+fi
+
