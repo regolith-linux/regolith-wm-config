@@ -17,10 +17,6 @@ bindsym $mod+Up focus up
 bindsym $mod+Right focus right
 
 ## Navigate // Relative Window // <> k j h l ##
-set_from_resource $wm.binding.left wm.binding.left h
-set_from_resource $wm.binding.right wm.binding.right l
-set_from_resource $wm.binding.up wm.binding.up k
-set_from_resource $wm.binding.down wm.binding.down j
 bindsym $mod+$wm.binding.left focus left
 bindsym $mod+$wm.binding.down focus down
 bindsym $mod+$wm.binding.up focus up
