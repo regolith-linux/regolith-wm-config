@@ -14,7 +14,7 @@ ACTION_TYPE=$1
 
 
 exit_with_error() {
-  echo "$1"
+  echo "ERROR: $1"
   echo "Exiting..."
   exit 1
 }
@@ -49,7 +49,7 @@ get_lid_close_cmd() {
       ;;
 
     *)
-      exit_with_error "Invalid or missing value for resource wm.lidclose.action"
+      exit_with_error "Invalid or missing value for resource wm.lidclose.action: $1"
   esac
 }
 
@@ -60,6 +60,8 @@ handle_clamshell() {
   elif [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
     echo "clamshell mode: Turning on inbuilt display for lid open"
     swaymsg output "$INBUILT_DISPLAY" enable
+  else
+    exit_with_error "clamshell mode: Unhandled ACTION_TYPE - $ACTION_TYPE"
   fi
 }
 
@@ -93,13 +95,15 @@ echo "Clamshell requirements not met. Executing lid close action."
 if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
   echo "Turning on inbuilt display for lid open"
   exec swaymsg output "$INBUILT_DISPLAY" enable
-fi
-
-if on_ac_power; then
-  echo "Executing lid close action on Power - $AC_ACTION"
-  exec $AC_ACTION_CMD
+elif [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
+  if on_ac_power; then
+    echo "Executing lid close action on Power - $AC_ACTION"
+    exec $AC_ACTION_CMD
+  else
+    echo "Executing lid close action on Battery- $BATTERY_ACTION"
+    exec $BATTERY_ACTION_CMD
+  fi
 else
-  echo "Executing lid close action on Battery- $BATTERY_ACTION"
-  exec $BATTERY_ACTION_CMD
+  exit_with_error "Unhandled ACTION_TYPE - $ACTION_TYPE"
 fi
 
