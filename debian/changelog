@@ -1,5 +1,10 @@
 regolith-wm-config (4.11.1) jammy; urgency=medium
 
+  [ Soumya Ranjan Patnaik ]
+  * fix(clamshell): directly execute actions
+  * fix: use gtklock from path
+  * chore: improve error handling
+
   * fix: pull nav binding definition out of partial, into root config, to prevent decl ordering issues
   * fix: update pkg name for touchpad package. remove bin package decl. add soft dep on grimshot.
 
