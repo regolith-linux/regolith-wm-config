@@ -1,3 +1,2 @@
-# Resource name to override the builtin display connector: wm.clamshell.display
-# Resource name to override the lid close action: wm.clamshell.action
-exec_always regolith-sway-clamshell
+bindswitch --locked --reload lid:on exec regolith-sway-clamshell LID_CLOSE
+bindswitch --locked --reload lid:off exec regolith-sway-clamshell LID_OPEN
