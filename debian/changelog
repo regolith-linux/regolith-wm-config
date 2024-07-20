@@ -1,3 +1,10 @@
+regolith-wm-config (4.11.1) jammy; urgency=medium
+
+  * fix: pull nav binding definition out of partial, into root config, to prevent decl ordering issues
+  * fix: update pkg name for touchpad package. remove bin package decl. add soft dep on grimshot.
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Fri, 19 Jul 2024 22:19:02 -0700
+
 regolith-wm-config (4.11.0) jammy; urgency=medium
 
   * feat: add 3 bindings for window and screen grabs with grimshot
