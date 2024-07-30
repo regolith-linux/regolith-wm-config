@@ -1,8 +1,9 @@
 regolith-wm-config (4.11.2) jammy; urgency=medium
 
+  [ Soumya Ranjan Patnaik ]
   * fix: import I3SOCK into the systemd environment for sway
 
- -- Soumya Ranjan Patnaik <soumyaranjan1812@gmail.com>  Tue, 30 Jul 2024 18:24:02 +0530
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 30 Jul 2024 06:07:11 -0700
 
 regolith-wm-config (4.11.1) jammy; urgency=medium
 
