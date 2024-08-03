@@ -1,3 +1,13 @@
+regolith-wm-config (4.11.3) jammy; urgency=medium
+
+  [ Haakon Sporsheim ]
+  * fix: correct several issues with xml wallpaper parsing in regolith-set-swaybg script
+
+  [ Regolith Linux ]
+  * fix: specify defaults for trawl. exit on error.  fix errors
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 03 Aug 2024 14:01:07 -0700
+
 regolith-wm-config (4.11.2) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
