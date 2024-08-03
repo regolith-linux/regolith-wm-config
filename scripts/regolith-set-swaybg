@@ -17,21 +17,18 @@ fi
 echo "$wallpaper IS valid XML? $is_valid_xml"
 
 if [[ "$wallpaper" == "" || ! $is_valid_xml ]]; then
-	exec swaymsg output "*" background "$color" solid_color
+  exec swaymsg output "*" background "$color" solid_color
 fi
 
-if $is_valid_xml; then
+if [[ "$is_valid_xml" == true ]]; then
   swaymsg output "*" background $(xmllint $wallpaper --xpath "string(*//size/text())") $mode $color
-  while IFS= read -r output_conf; do    
-    local height=$(echo $config | jq '.height')
-    local width=$(echo $config | jq '.width')
-    local name=$(echo $config | jq '.name')
-    local wallpaper_file=$(xmllint $wallpaper --xpath "string(*//size[@width=$width])[@height=$height]/text()")
-    swaymsg output "$name" "$wallpaper_file" $mode $color
-  done< <(swaymsg -t get_outputs |
-    jq ' map({name:.name, width: .current_mode.width, heght: .current_mode.height}) ' |
-    jq -c '.[]')
+  while IFS= read -r output_conf; do
+    name=$(echo $output_conf | jq '.name')
+    width=$(echo $output_conf | jq '.width')
+    height=$(echo $output_conf | jq '.height')
+    wallpaper_file=$(xmllint $wallpaper --xpath "string(*//size[@width=$width][@height=$height]/text())")
+    swaymsg output $name background "$wallpaper_file" $mode $color
+  done< <(swaymsg -t get_outputs | jq -c 'map({name:.name, width: .current_mode.width, height: .current_mode.height}).[]')
 else
-  exec swaymsg output "*" background $wallpaper $mode $color 
+  exec swaymsg output "*" background $wallpaper $mode $color
 fi
-
