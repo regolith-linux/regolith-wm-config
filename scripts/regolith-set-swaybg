@@ -1,10 +1,12 @@
-#!/bin/bash
-wallpaper=$(trawlcat regolith.wallpaper.file "")
-color=$(trawlcat regolith.wallpaper.color.primary)
-mode=$(trawlcat regolith.wallpaper.mode "fill")
-outputs=$(trawlcat regolith.wallpaper.outputs "*")
+#!/usr/bin/env bash
 
-is_text=$(file $wallpaper | grep "text" | wc -l)
+set -euo pipefail
+
+wallpaper=$(trawlcat regolith.wallpaper.file "")
+color=$(trawlcat regolith.wallpaper.color.primary "")
+mode=$(trawlcat regolith.wallpaper.mode "fill")
+
+is_text=$(file $wallpaper | grep -c "text" || :)
 is_valid_xml=false
 
 if [[ "$is_text" == "1" ]]; then
@@ -13,8 +15,6 @@ if [[ "$is_text" == "1" ]]; then
     is_valid_xml=true
   fi
 fi
-
-echo "$wallpaper IS valid XML? $is_valid_xml"
 
 if [[ "$wallpaper" == "" || ! $is_valid_xml ]]; then
   exec swaymsg output "*" background "$color" solid_color
