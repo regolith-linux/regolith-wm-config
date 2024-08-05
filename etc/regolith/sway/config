@@ -73,16 +73,17 @@ set $ws19 "$ws19"
 # These are the keys which will be used while binding workspace switching
 ###############################################################################
 
-set_from_resource $ws1_key  wm.workspace.01.key 1
-set_from_resource $ws2_key  wm.workspace.02.key 2
-set_from_resource $ws3_key  wm.workspace.03.key 3
-set_from_resource $ws4_key  wm.workspace.04.key 4
-set_from_resource $ws5_key  wm.workspace.05.key 5
-set_from_resource $ws6_key  wm.workspace.06.key 6
-set_from_resource $ws7_key  wm.workspace.07.key 7
-set_from_resource $ws8_key  wm.workspace.08.key 8
-set_from_resource $ws9_key  wm.workspace.09.key 9
-set_from_resource $ws10_key wm.workspace.10.key 0
+set_from_resource $ws1_key     wm.workspace.01.key 1
+set_from_resource $ws2_key     wm.workspace.02.key 2
+set_from_resource $ws3_key     wm.workspace.03.key 3
+set_from_resource $ws4_key     wm.workspace.04.key 4
+set_from_resource $ws5_key     wm.workspace.05.key 5
+set_from_resource $ws6_key     wm.workspace.06.key 6
+set_from_resource $ws7_key     wm.workspace.07.key 7
+set_from_resource $ws8_key     wm.workspace.08.key 8
+set_from_resource $ws9_key     wm.workspace.09.key 9
+set_from_resource $ws10_key    wm.workspace.10.key 0
+set_from_resource $ws_high_key wm.workspace.high.key Ctrl
 
 ###############################################################################
 # Colors and Fonts
