@@ -1,3 +1,9 @@
+regolith-wm-config (4.11.5) jammy; urgency=medium
+
+  * fix: specify valid color default. Load best quality image instead of worst.  Only set wallpaper if resolution match found. Cleanup.
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 07 Aug 2024 07:56:03 -0700
+
 regolith-wm-config (4.11.4) jammy; urgency=medium
 
   [ jblosser ]
