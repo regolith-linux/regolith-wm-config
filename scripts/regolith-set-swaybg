@@ -3,14 +3,14 @@
 set -euo pipefail
 
 wallpaper=$(trawlcat regolith.wallpaper.file "")
-color=$(trawlcat regolith.wallpaper.color.primary "")
+color=$(trawlcat regolith.wallpaper.color.primary "#000000")
 mode=$(trawlcat regolith.wallpaper.mode "fill")
 
-is_text=$(file $wallpaper | grep -c "text" || :)
+is_text=$(file "$wallpaper" | grep -c "text" || :)
 is_valid_xml=false
 
 if [[ "$is_text" == "1" ]]; then
-  xmllint --noout $wallpaper
+  xmllint --noout "$wallpaper"
   if [[ "$?" == "0" ]]; then
     is_valid_xml=true
   fi
@@ -21,14 +21,18 @@ if [[ "$wallpaper" == "" || ! $is_valid_xml ]]; then
 fi
 
 if [[ "$is_valid_xml" == true ]]; then
-  swaymsg output "*" background $(xmllint $wallpaper --xpath "string(*//size/text())") $mode $color
+  image_path=$(xmllint "$wallpaper" --xpath "string(*//size[last()]/text())")
+  swaymsg output "*" background "$image_path" "$mode" "$color"
   while IFS= read -r output_conf; do
-    name=$(echo $output_conf | jq '.name')
-    width=$(echo $output_conf | jq '.width')
+    name=$(echo "$output_conf" | jq '.name')
+    width=$(echo "$output_conf" | jq '.width')
     height=$(echo $output_conf | jq '.height')
-    wallpaper_file=$(xmllint $wallpaper --xpath "string(*//size[@width=$width][@height=$height]/text())")
-    swaymsg output $name background "$wallpaper_file" $mode $color
+    wallpaper_file=$(xmllint "$wallpaper" --xpath "string(*//size[@width=$width][@height=$height]/text())")
+
+    if [[ -n "$wallpaper_file" ]]; then
+      swaymsg output "$name" background "$wallpaper_file" "$mode" "$color"
+    fi
   done< <(swaymsg -t get_outputs | jq -c 'map({name:.name, width: .current_mode.width, height: .current_mode.height}).[]')
 else
-  exec swaymsg output "*" background $wallpaper $mode $color
+  exec swaymsg output "*" background "$wallpaper" "$mode" "$color"
 fi
