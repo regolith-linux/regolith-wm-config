@@ -156,6 +156,14 @@ set_from_resource $wm.binding.up wm.binding.up k
 set_from_resource $wm.binding.down wm.binding.down j
 
 ###############################################################################
+# Common Window Bindings
+###############################################################################
+set_from_resource $wm.binding.move_left wm.binding.move_left Shift+h
+set_from_resource $wm.binding.move_right wm.binding.move_right Shift+l
+set_from_resource $wm.binding.move_up wm.binding.move_up Shift+k
+set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
+
+###############################################################################
 # WM Config Partials
 ###############################################################################
 

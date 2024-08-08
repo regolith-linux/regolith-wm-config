@@ -9,10 +9,6 @@ bindsym $mod+Shift+Up move up
 bindsym $mod+Shift+Right move right
 
 ## Modify // Window Position // <><Shift> k j h l ##
-set_from_resource $wm.binding.move_left wm.binding.move_left Shift+h
-set_from_resource $wm.binding.move_right wm.binding.move_right Shift+l
-set_from_resource $wm.binding.move_up wm.binding.move_up Shift+k
-set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 bindsym $mod+$wm.binding.move_left move left
 bindsym $mod+$wm.binding.move_down move down
 bindsym $mod+$wm.binding.move_up move up
