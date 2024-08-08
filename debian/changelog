@@ -1,3 +1,10 @@
+regolith-wm-config (4.11.6) jammy; urgency=medium
+
+  [ Martin Gontscharow ]
+  * fix: pull window binding definition out of partial, into root config, to prevent decl ordering issues
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Wed, 07 Aug 2024 20:08:12 -0700
+
 regolith-wm-config (4.11.5) jammy; urgency=medium
 
   * fix: specify valid color default. Load best quality image instead of worst.  Only set wallpaper if resolution match found. Cleanup.
