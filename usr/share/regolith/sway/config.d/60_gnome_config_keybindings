@@ -28,6 +28,3 @@ set_from_resource $wm.program.files wm.program.files /usr/bin/nautilus --new-win
 bindsym $mod+$wm.binding.files exec --no-startup-id $wm.program.files
 
 for_window [class="gnome-control-center"] floating enable
-
-set_from_resource $wm.program.media-keys wm.program.media-keys /usr/libexec/gnome-flashback-media-keys
-exec --no-startup-id $wm.program.media-keys
