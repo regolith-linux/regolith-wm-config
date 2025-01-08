@@ -54,7 +54,7 @@ Depends: ${misc:Depends},
 Recommends: regolith-sway-audio-idle-inhibit,
   regolith-sway-background,
   regolith-sway-clamshell,
-  regolith-sway-control-center-regolith,
+  regolith-sway-control-center-regolith | regolith-sway-control-center-gnome,
   regolith-sway-default-style,
   regolith-sway-gaps,
   regolith-sway-grimshot,
@@ -216,6 +216,18 @@ Conflicts: regolith-wm-gnome
 Replaces: regolith-wm-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
+
+Package: regolith-sway-control-center-gnome
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  gnome-control-center,
+  gnome-settings-daemon
+Provides: regolith-wm-control-center
+Conflicts: regolith-wm-gnome
+Replaces: regolith-wm-gnome
+Description: regolith and gnome integrations for system management
+ Launch gnome settings app for system management.
 
 Package: regolith-i3-control-center-gnome
 Architecture: any
