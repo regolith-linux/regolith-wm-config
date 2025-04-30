@@ -1,4 +1,4 @@
-regolith-wm-config (4.11.9) jammygit ; urgency=medium
+regolith-wm-config (4.11.9) jammy; urgency=medium
 
   [ Khosrow Moossavi ]
   * feat: use build-only to test pull request
