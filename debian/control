@@ -200,8 +200,8 @@ Depends: ${misc:Depends},
   regolith-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-gnome
-Replaces: regolith-wm-gnome
+Conflicts: regolith-wm-gnome, regolith-i3-control-center-gnome
+Replaces: regolith-wm-gnome, regolith-i3-control-center-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
 
@@ -212,8 +212,8 @@ Depends: ${misc:Depends},
   regolith-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-gnome
-Replaces: regolith-wm-gnome
+Conflicts: regolith-wm-gnome, regolith-sway-control-center-gnome
+Replaces: regolith-wm-gnome, regolith-sway-control-center-gnome
 Description: regolith and gnome integrations for system management
  Launch regolith settings app for system management.
 
@@ -224,8 +224,8 @@ Depends: ${misc:Depends},
   gnome-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-gnome
-Replaces: regolith-wm-gnome
+Conflicts: regolith-wm-gnome, regolith-sway-control-center-regolith
+Replaces: regolith-wm-gnome, regolith-sway-control-center-regolith
 Description: regolith and gnome integrations for system management
  Launch gnome settings app for system management.
 
@@ -236,8 +236,8 @@ Depends: ${misc:Depends},
   gnome-control-center,
   gnome-settings-daemon
 Provides: regolith-wm-control-center
-Conflicts: regolith-wm-gnome
-Replaces: regolith-wm-gnome
+Conflicts: regolith-wm-gnome, regolith-i3-control-center-regolith
+Replaces: regolith-wm-gnome, regolith-i3-control-center-regolith
 Description: gnome integrations for system management
  Launch gnome settings app for system management.
 
