@@ -1,3 +1,13 @@
+regolith-wm-config (4.11.9) jammy; urgency=medium
+
+  [ Khosrow Moossavi ]
+  * feat: use build-only to test pull request
+
+  [ Ken Gilmer ]
+  * fix: cause conflicts on control center packages so only one can be installed at a time
+
+ -- Ken Gilmer <kgilmer@gmail.com>  Tue, 29 Apr 2025 19:16:40 -0700
+
 regolith-wm-config (4.11.8) jammy; urgency=medium
 
   [ Khosrow Moossavi ]
