@@ -64,7 +64,7 @@ bindsym $mod+$wm.binding.focus_toggle focus mode_toggle
 
 ## Modify // Window Layout Mode // <> t ##
 set_from_resource $wm.binding.layout_mode wm.binding.layout_mode t
-bindsym $mod+$wm.binding.layout_mode layout toggle tabbed splith splitv
+bindsym $mod+$wm.binding.layout_mode layout toggle tabbed stacking splith splitv
 
 # move focused container to workspace
 set_from_resource $wm.move_container_to_ws_key wm.move_container_to_ws_key Shift
