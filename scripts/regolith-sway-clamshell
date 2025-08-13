@@ -22,7 +22,7 @@ exit_with_error() {
 get_lid_close_cmd() {
   # Actions to take based on the value of wm.lidclose.action
   local DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
-  local LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
+  local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK")
   local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
   local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
   local SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
