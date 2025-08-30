@@ -25,7 +25,7 @@ get_lid_close_cmd() {
   local LOCK=$( trawlcat wm.program.lock "$DEFAULT_LOCK")
   local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
   local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
-  local SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
+  local SHUTDOWN=$( trawlcat wm.program.shutdown "systemctl poweroff")
 
   case "$1" in
     "DO_NOTHING")

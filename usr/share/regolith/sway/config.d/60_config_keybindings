@@ -1,30 +1,44 @@
-###############################################################################
 # System Management
 ###############################################################################
 
 ## Modify // Settings // <> c ##
 set_from_resource $wm.binding.settings wm.binding.settings c
-set_from_resource $wm.program.settings wm.program.settings regolith-control-center
+set_from_resource $wm.program.settings wm.program.settings cosmic-settings
 bindsym $mod+$wm.binding.settings exec --no-startup-id $wm.program.settings
 
 ## Modify // Display Settings // <> d ##
 set_from_resource $wm.binding.display wm.binding.display d
-set_from_resource $wm.program.display wm.program.display regolith-control-center display
+set_from_resource $wm.program.display wm.program.display cosmic-settings displays
 bindsym $mod+$wm.binding.display exec --no-startup-id $wm.program.display
 
 ## Modify // Wifi Settings // <> w ##
 set_from_resource $wm.binding.wifi wm.binding.wifi w
-set_from_resource $wm.program.wifi wm.program.wifi regolith-control-center wifi
+set_from_resource $wm.program.wifi wm.program.wifi cosmic-settings wireless
 bindsym $mod+$wm.binding.wifi exec --no-startup-id $wm.program.wifi
 
 ## Modify // Bluetooth Settings // <> b ##
 set_from_resource $wm.binding.bluetooth wm.binding.bluetooth b
-set_from_resource $wm.program.bluetooth wm.program.bluetooth regolith-control-center bluetooth
+set_from_resource $wm.program.bluetooth wm.program.bluetooth cosmic-settings bluetooth
 bindsym $mod+$wm.binding.bluetooth exec --no-startup-id $wm.program.bluetooth
+
+## Modify // Sound Settings // <><Shift> a ##
+set_from_resource $wm.binding.sound wm.binding.sound Shift+a
+set_from_resource $wm.program.sound wm.program.sound cosmic-settings sound
+bindsym $mod+$wm.binding.sound exec --no-startup-id $wm.program.sound
+
+## Modify // Power Settings // <><Shift> p ##
+set_from_resource $wm.binding.power wm.binding.power Shift+p
+set_from_resource $wm.program.power wm.program.power cosmic-settings power
+bindsym $mod+$wm.binding.power exec --no-startup-id $wm.program.power
+
+## Modify // Appearance Settings // <><Shift> t ##
+set_from_resource $wm.binding.appearance wm.binding.appearance Shift+t
+set_from_resource $wm.program.appearance wm.program.appearance cosmic-settings appearance
+bindsym $mod+$wm.binding.appearance exec --no-startup-id $wm.program.appearance
 
 ## Launch // File Browser // <><Shift> n ##
 set_from_resource $wm.binding.files wm.binding.files Shift+n
-set_from_resource $wm.program.files wm.program.files /usr/bin/nautilus --new-window
+set_from_resource $wm.program.files wm.program.files cosmic-files
 bindsym $mod+$wm.binding.files exec --no-startup-id $wm.program.files
 
-for_window [app_id="org.regolith.Settings"] floating enable
+for_window [app_id="com.system76.CosmicSettings"] floating enable

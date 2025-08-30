@@ -1,4 +1,3 @@
-###############################################################################
 # Session Management
 ###############################################################################
 
@@ -24,23 +23,28 @@ bindsym $mod+$wm.binding.refresh exec $wm.program.refresh_ui
 
 ## Session // Logout // <><Shift> e ##
 set_from_resource $wm.binding.logout wm.binding.logout Shift+e
-set_from_resource $wm.program.logout wm.program.logout /usr/bin/gnome-session-quit --logout --no-prompt && swaymsg exit
+set_from_resource $wm.program.logout wm.program.logout loginctl logout && swaymsg exit
 set_from_resource $sway.prompt.logout sway.prompt.logout "swaynag -t warning -m 'Do you really want to logout?' -b 'Logout' '$wm.program.logout'"
 bindsym $mod+$wm.binding.logout exec $sway.prompt.logout 
 
 ## Session // Reboot // <><Shift> b ##
 set_from_resource $wm.binding.reboot wm.binding.reboot Shift+b
-set_from_resource $wm.program.reboot wm.program.reboot /usr/bin/gnome-session-quit --reboot --no-prompt
+set_from_resource $wm.program.reboot wm.program.reboot loginctl reboot
 set_from_resource $sway.prompt.reboot sway.prompt.reboot "swaynag -t warning -m 'Do you really want to reboot your system?' -b 'Reboot' '$wm.program.reboot'"
 bindsym $mod+$wm.binding.reboot exec $sway.prompt.reboot 
 
 ## Session // Power Down // <><Shift> p ##
 set_from_resource $wm.binding.shutdown wm.binding.shutdown Shift+p
-set_from_resource $wm.program.shutdown wm.program.shutdown /usr/bin/gnome-session-quit --power-off --no-prompt
+set_from_resource $wm.program.shutdown wm.program.shutdown loginctl poweroff
 set_from_resource $sway.prompt.shutdown sway.prompt.shutdown "swaynag -t warning -m 'Do you really want to shutdown' -b 'Shutdown' '$wm.program.shutdown'"
 bindsym $mod+$wm.binding.shutdown exec $sway.prompt.shutdown 
 
+## Session // Lock Screen // <> Escape ##
+set_from_resource $wm.binding.lock wm.binding.lock Escape
+set_from_resource $wm.program.lock wm.program.lock loginctl lock-session
+bindsym $mod+$wm.binding.lock exec $wm.program.lock
+
 ## Session // Sleep // <><Shift> s ##
 set_from_resource $wm.binding.sleep wm.binding.sleep Shift+s
-set_from_resource $wm.program.sleep wm.program.sleep systemctl suspend
+set_from_resource $wm.program.sleep wm.program.sleep loginctl suspend
 bindsym --locked $mod+$wm.binding.sleep exec $wm.program.sleep

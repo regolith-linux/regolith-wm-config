@@ -4,30 +4,30 @@
 
 ## Modify // Settings // <> c ##
 set_from_resource $wm.binding.settings wm.binding.settings c
-set_from_resource $wm.program.settings wm.program.settings gnome-control-center
+set_from_resource $wm.program.settings wm.program.settings cosmic-settings
 bindsym $mod+$wm.binding.settings exec --no-startup-id $wm.program.settings
 
 ## Modify // Display Settings // <> d ##
 set_from_resource $wm.binding.display wm.binding.display d
-set_from_resource $wm.program.display wm.program.display gnome-control-center display
+set_from_resource $wm.program.display wm.program.display cosmic-settings displays
 bindsym $mod+$wm.binding.display exec --no-startup-id $wm.program.display
 
 ## Modify // Wifi Settings // <> w ##
 set_from_resource $wm.binding.wifi wm.binding.wifi w
-set_from_resource $wm.program.wifi wm.program.wifi gnome-control-center wifi
+set_from_resource $wm.program.wifi wm.program.wifi cosmic-settings wireless
 bindsym $mod+$wm.binding.wifi exec --no-startup-id $wm.program.wifi
 
 ## Modify // Bluetooth Settings // <> b ##
 set_from_resource $wm.binding.bluetooth wm.binding.bluetooth b
-set_from_resource $wm.program.bluetooth wm.program.bluetooth gnome-control-center bluetooth
+set_from_resource $wm.program.bluetooth wm.program.bluetooth cosmic-settings bluetooth
 bindsym $mod+$wm.binding.bluetooth exec --no-startup-id $wm.program.bluetooth
 
 ## Launch // File Browser // <><Shift> n ##
 set_from_resource $wm.binding.files wm.binding.files Shift+n
-set_from_resource $wm.program.files wm.program.files /usr/bin/nautilus --new-window
+set_from_resource $wm.program.files wm.program.files cosmic-files
 bindsym $mod+$wm.binding.files exec --no-startup-id $wm.program.files
 
-for_window [class="gnome-control-center"] floating enable
+for_window [class="cosmic-settings"] floating enable
 
-set_from_resource $wm.program.media-keys wm.program.media-keys /usr/libexec/gnome-flashback-media-keys
+set_from_resource $wm.program.media-keys wm.program.media-keys cosmic-session
 exec --no-startup-id $wm.program.media-keys
