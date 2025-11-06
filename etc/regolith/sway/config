@@ -179,6 +179,8 @@ include $HOME/.config/regolith3/common-wm/config.d/*
 # Include any user wm partials
 include $HOME/.config/regolith3/sway/config.d/*
 
+include $HOME/.config/regolith3/sway/cosmic-settings/generated-config.d/*
+
 # Start the systemd target manually is the session is not started by systemd
 # Notify systemd about successful session start otherwise
 exec --no-startup-id [ -z "${NOTIFY_SOCKET-}" ] \

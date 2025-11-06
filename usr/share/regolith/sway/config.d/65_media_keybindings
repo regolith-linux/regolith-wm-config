@@ -2,15 +2,15 @@
 
 # Volume Controls
 set_from_resource $wm.media.volume.step sway.media.volume.step 5
-bindsym --locked XF86AudioRaiseVolume exec volumectl -u + $wm.media.volume.step
-bindsym --locked XF86AudioLowerVolume exec volumectl -u - $wm.media.volume.step
-bindsym --locked XF86AudioMute exec volumectl %
-bindsym --locked XF86AudioMicMute exec volumectl -m %
+bindsym --locked XF86AudioRaiseVolume exec pactl set-sink-volume @DEFAULT_SINK@ +$wm.media.volume.step%
+bindsym --locked XF86AudioLowerVolume exec pactl set-sink-volume @DEFAULT_SINK@ -$wm.media.volume.step%
+bindsym --locked XF86AudioMute exec pactl set-sink-mute @DEFAULT_SINK@ toggle
+bindsym --locked XF86AudioMicMute exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
 
 # Brightness Controls
 set_from_resource $wm.media.brightness.step wm.media.brightness.step 5
-bindsym XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
-bindsym XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
+bindsym --locked XF86MonBrightnessUp exec brightnessctl set $wm.media.brightness.step%+
+bindsym --locked XF86MonBrightnessDown exec brightnessctl set $wm.media.brightness.step%-
 
 # Player Controls
 # The keycodes 172 and 208 are both bound to XF86AudioPlay but have different meanings
