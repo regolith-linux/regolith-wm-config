@@ -51,8 +51,7 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
   regolith-sway-dbus-activation
-Recommends: regolith-sway-audio-idle-inhibit,
-  regolith-sway-background,
+Recommends: regolith-sway-background,
   regolith-sway-clamshell,
   regolith-sway-control-center-regolith | regolith-sway-control-center-gnome,
   regolith-sway-default-style,
@@ -379,13 +378,6 @@ Depends: ${misc:Depends},
     trawlcat,
     regolith-wm-config,
 Description: Configuration for using gtklock as the default locker
-
-Package: regolith-sway-audio-idle-inhibit
-Architecture: any
-Depends: ${misc:Depends},
-    sway-audio-idle-inhibit,
-    regolith-wm-config
-Description: Prevent sway from entering idle state if audio is playing
 
 Package: regolith-sway-unclutter
 Architecture: any
