@@ -1,3 +1,14 @@
+regolith-wm-config (4.11.11) jammy; urgency=medium
+
+  [ Margulan ]
+  * Add stacking layout to default layout toggle list
+
+  [ Soumya Ranjan Patnaik ]
+  * chore!: use seperate Xresource keys for lock program
+  * chore: remove the audio idle inhibit package
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sun, 23 Nov 2025 19:15:19 +0000
+
 regolith-wm-config (4.11.10) jammy; urgency=medium
 
   [ Soumya Ranjan Patnaik ]
