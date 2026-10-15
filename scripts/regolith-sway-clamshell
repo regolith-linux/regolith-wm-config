@@ -53,6 +53,31 @@ get_lid_close_cmd() {
   esac
 }
 
+# Lock the session before suspending, so that a suspend that is delayed or
+# fails never leaves the session unlocked. `gtklock -d` returns once the
+# compositor has confirmed the lock; a locker that does not daemonize keeps
+# running and the bounded wait just times out.
+lock_before_sleep() {
+  local DEFAULT_LOCK="gtklock -d --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+  local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK" )
+  $LOCK &
+  local LOCK_PID=$!
+  for _ in {1..50}; do
+    kill -0 "$LOCK_PID" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  echo "Locker still running after 5 seconds, continuing"
+}
+
+exec_lid_close_action() {
+  case "$1" in
+    "SLEEP" | "HIBERNATE")
+      lock_before_sleep
+      ;;
+  esac
+  exec $2
+}
+
 handle_clamshell() {
   if [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
     echo "clamshell mode: Turning off inbuilt display for lid close"
@@ -98,10 +123,10 @@ if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
 elif [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
   if on_ac_power; then
     echo "Executing lid close action on Power - $AC_ACTION"
-    exec $AC_ACTION_CMD
+    exec_lid_close_action "$AC_ACTION" "$AC_ACTION_CMD"
   else
     echo "Executing lid close action on Battery- $BATTERY_ACTION"
-    exec $BATTERY_ACTION_CMD
+    exec_lid_close_action "$BATTERY_ACTION" "$BATTERY_ACTION_CMD"
   fi
 else
   exit_with_error "Unhandled ACTION_TYPE - $ACTION_TYPE"
