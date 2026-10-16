@@ -19,6 +19,13 @@ exit_with_error() {
   exit 1
 }
 
+# on_ac_power exits 0 on mains power, 1 on battery and 255 when the power
+# source is unknown (no power sensors); only exit status 1 means battery.
+on_battery() {
+  on_ac_power
+  [[ $? -eq 1 ]]
+}
+
 get_lid_close_cmd() {
   # Actions to take based on the value of wm.lidclose.action
   local DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
@@ -96,7 +103,7 @@ if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
   echo "Turning on inbuilt display for lid open"
   exec swaymsg output "$INBUILT_DISPLAY" enable
 elif [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
-  if on_ac_power; then
+  if ! on_battery; then
     echo "Executing lid close action on Power - $AC_ACTION"
     exec $AC_ACTION_CMD
   else
