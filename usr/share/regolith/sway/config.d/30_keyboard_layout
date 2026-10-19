@@ -6,10 +6,10 @@
 ## Modify // Next Layout // <><Alt> BackSpace ##
 set_from_resource $wm.binding.next_layout wm.binding.next_layout $alt+BackSpace
 set_from_resource $wm.program.next_layout wm.program.next_layout input * xkb_switch_layout next
-bindsym $mod+$wm.binding.next_layout $wm.program.next_layout
+bindsym --locked $mod+$wm.binding.next_layout $wm.program.next_layout
 
 ## Modify // Prev Layout // <><Alt><Shift> BackSpace ##
 set_from_resource $wm.binding.next_layout wm.binding.next_layout $alt+Shift+BackSpace
 set_from_resource $wm.program.next_layout wm.program.next_layout input * xkb_switch_layout prev
-bindsym $mod+$wm.binding.next_layout $wm.program.next_layout
+bindsym --locked $mod+$wm.binding.next_layout $wm.program.next_layout
 
