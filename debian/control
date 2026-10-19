@@ -124,7 +124,7 @@ Description: Help for new users
 Package: regolith-i3-compositor
 Architecture: any
 Depends: ${misc:Depends},
-  regolith-compositor-none | regolith-compositor
+  regolith-compositor-picom-glx | regolith-compositor
 Description: Integration of compositor into i3
  Launches a compositor for window effects.
 
