@@ -1,3 +1,13 @@
+regolith-wm-config (4.11.12) jammy; urgency=medium
+
+  [ Carlos Fernandez Sanz ]
+  * fix(clamshell): lock the session before suspending on lid close
+  * fix(clamshell): treat an unknown power source as AC, not battery
+  * fix(debian): restore the settings integration after a release upgrade
+  * fix(debian): make picom-glx the X11 compositor default for every solver
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 20 Oct 2026 13:59:10 +0000
+
 regolith-wm-config (4.11.11) jammy; urgency=medium
 
   [ Margulan ]
