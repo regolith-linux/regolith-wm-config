@@ -31,3 +31,12 @@ for_window [class="gnome-control-center"] floating enable
 
 set_from_resource $wm.program.media-keys wm.program.media-keys /usr/libexec/gnome-flashback-media-keys
 exec --no-startup-id $wm.program.media-keys
+
+# gnome-flashback-media-keys handles these keys (gsettings
+# org.gnome.gnome-flashback.keybindings); the lines below only list them in the viewer.
+## Session // Screenshot // Print ##
+## Session // Screenshot Area // <Shift> Print ##
+## Session // Screenshot Window // <Alt> Print ##
+## Session // Copy Screenshot to Clipboard // <Ctrl> Print ##
+## Session // Copy Area Screenshot to Clipboard // <Ctrl><Shift> Print ##
+## Session // Copy Window Screenshot to Clipboard // <Ctrl><Alt> Print ##
