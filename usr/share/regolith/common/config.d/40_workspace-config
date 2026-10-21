@@ -91,7 +91,11 @@ bindsym $mod+$wm.move_container_to_ws_key+$ws_high_key+$ws8_key move container t
 bindsym $mod+$wm.move_container_to_ws_key+$ws_high_key+$ws9_key move container to workspace number $ws19
 
 # move focused container to workspace, move to workspace
-set_from_resource $wm.carry_container_to_ws_key wm.carry_container_to_ws_key Mod1
+# The default must act like $alt, but i3 does not expand variables inside a
+# set_from_resource default. Use both Alt and Super instead: $mod is always one
+# of them, so the chord is $mod+$alt with the default keys and with
+# wm.mod/wm.alt swapped.
+set_from_resource $wm.carry_container_to_ws_key wm.carry_container_to_ws_key Mod1+Mod4
 ## Modify // Carry Window to Workspace 1 - 10// <><Alt> 0..9 ##
 bindsym $mod+$wm.carry_container_to_ws_key+$ws1_key move container to workspace number $ws1; workspace number $ws1
 bindsym $mod+$wm.carry_container_to_ws_key+$ws2_key move container to workspace number $ws2; workspace number $ws2
