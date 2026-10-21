@@ -1,0 +1,8 @@
+###############################################################################
+# Cycle Keyboard layout
+###############################################################################
+
+# GNOME handles these keys in X11 (gsettings org.gnome.desktop.wm.keybindings
+# switch-input-source*); the lines below only list them in the viewer.
+## Modify // Next Layout // <><Alt> BackSpace ##
+## Modify // Prev Layout // <><Alt><Shift> BackSpace ##
