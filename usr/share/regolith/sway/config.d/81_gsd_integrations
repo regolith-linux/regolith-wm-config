@@ -1,4 +1,5 @@
 exec_always systemctl restart --user regolith-init-kanshi.service
 
-# Set the default input method to none
-exec_always im-config -n none
+# Set the default input method to none, unless the user chose one with
+# im-config (kept in ~/.xinputrc)
+exec [ -e ~/.xinputrc ] || im-config -n none
