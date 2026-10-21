@@ -1,3 +1,8 @@
+# Serve the GNOME theme, fonts and cursor to X11 apps (gsd-xsettings). It
+# must outlive XWayland's clients, so XWayland starts with sway.
+xwayland force
+exec [ -n "${DISPLAY-}" ] && systemctl --user import-environment DISPLAY && systemctl --user start gnome-session-x11-services-ready.target
+
 exec_always systemctl restart --user regolith-init-kanshi.service
 
 # Set the default input method to none
