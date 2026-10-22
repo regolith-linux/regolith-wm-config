@@ -96,6 +96,7 @@ Description: Regolith Desktop i3 session keybindings
 Package: regolith-sway-session
 Architecture: any
 Depends: ${misc:Depends},
+  jq,
   regolith-wm-config
 Description: Regolith Desktop sway session keybindings
 
