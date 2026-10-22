@@ -17,7 +17,6 @@ Recommends:
   regolith-wm-ftue,
   regolith-wm-navigation,
   regolith-wm-networkmanager,
-  regolith-wm-next-workspace,
   regolith-wm-resize,
   regolith-wm-rofication-ilia,
   regolith-wm-workspace-config
@@ -41,6 +40,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-gaps,
   regolith-i3-i3xrocks,
   regolith-i3-ilia,
+  regolith-i3-next-workspace,
   regolith-i3-session,
   regolith-i3-unclutter
 Description: Regolith i3 root config file
