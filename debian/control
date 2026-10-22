@@ -318,6 +318,8 @@ Depends: ${misc:Depends},
     xdg-desktop-portal,
     xdg-desktop-portal-wlr,
     regolith-wm-config
+Recommends:
+    xdg-desktop-portal-luminous
 Description: Configuration for screensharing
 
 Package: regolith-sway-gsd
