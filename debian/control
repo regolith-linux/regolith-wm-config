@@ -380,6 +380,17 @@ Depends: ${misc:Depends},
     regolith-wm-config,
 Description: Configuration for using gtklock as the default locker
 
+Package: regolith-sway-audio-idle-inhibit
+Architecture: all
+Section: oldlibs
+Depends: ${misc:Depends},
+    sway-audio-idle-inhibit (>= 2.0.0)
+Description: transitional package for sway-audio-idle-inhibit
+ Earlier versions of this package started sway-audio-idle-inhibit from a sway
+ config partial. The sway-audio-idle-inhibit package now starts it as a
+ systemd user service, so this package is empty. It lets plain upgrades drop
+ the old partial without removing anything, and can be safely removed.
+
 Package: regolith-sway-unclutter
 Architecture: any
 Depends: ${misc:Depends},
