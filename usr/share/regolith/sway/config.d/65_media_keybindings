@@ -9,8 +9,8 @@ bindsym --locked XF86AudioMicMute exec volumectl -m %
 
 # Brightness Controls
 set_from_resource $wm.media.brightness.step wm.media.brightness.step 5
-bindsym XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
-bindsym XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
+bindsym --locked XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
+bindsym --locked XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
 
 # Player Controls
 # The keycodes 172 and 208 are both bound to XF86AudioPlay but have different meanings
