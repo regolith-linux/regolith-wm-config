@@ -76,6 +76,10 @@ bindsym $mod+$wm.binding.ws_prev_on_output workspace prev_on_output
 set_from_resource $wm.binding.ws_prev_on_output2 wm.binding.ws_prev_on_output2 Ctrl+h
 bindsym $mod+$wm.binding.ws_prev_on_output2 workspace prev_on_output
 
+## Navigate // Workspace Back and Forth // <><Alt> Tab ##
+set_from_resource $wm.binding.ws_back_and_forth wm.binding.ws_back_and_forth Tab
+bindsym $mod+$alt+$wm.binding.ws_back_and_forth workspace back_and_forth
+
 ## Navigate // Scratchpad // <><Ctrl> a ##
 set_from_resource $wm.binding.scratchpad wm.binding.scratchpad Ctrl+a
 bindsym $mod+$wm.binding.scratchpad scratchpad show
