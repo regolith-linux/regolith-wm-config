@@ -178,9 +178,3 @@ include $HOME/.config/regolith3/common-wm/config.d/*
 
 # Include any user wm partials
 include $HOME/.config/regolith3/sway/config.d/*
-
-# Start the systemd target manually is the session is not started by systemd
-# Notify systemd about successful session start otherwise
-exec --no-startup-id [ -z "${NOTIFY_SOCKET-}" ] \
-  && systemctl --user start regolith-wayland.target \
-  || systemd-notify --ready
