@@ -40,6 +40,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-gaps,
   regolith-i3-i3xrocks,
   regolith-i3-ilia,
+  regolith-i3-layout-bindings,
   regolith-i3-next-workspace,
   regolith-i3-session,
   regolith-i3-unclutter
@@ -240,6 +241,21 @@ Conflicts: regolith-wm-gnome, regolith-i3-control-center-regolith
 Replaces: regolith-wm-gnome, regolith-i3-control-center-regolith
 Description: gnome integrations for system management
  Launch gnome settings app for system management.
+
+Package: regolith-i3-layout-bindings
+Architecture: any
+Depends: ${misc:Depends},
+  i3-wm (>= 4.20),
+  libxcb1,
+  libxkbcommon-x11-0,
+  libxkbcommon0,
+  python3,
+  x11-utils
+Description: Make i3 key bindings follow the active keyboard layout
+ i3 resolves key bindings in the first keyboard layout only. This package
+ adds copies of the bindings for the other layouts, and the US key positions
+ for layouts without Latin letters, so that shortcuts behave as in GNOME and
+ in the sway session whatever the order of the input sources.
 
 Package: regolith-i3-next-workspace
 Architecture: any

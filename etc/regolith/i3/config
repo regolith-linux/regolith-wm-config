@@ -147,6 +147,11 @@ set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 # WM Config Partials
 ###############################################################################
 
+# Copies of the key bindings for the other keyboard layouts, so that bindings
+# follow the active layout (written by regolith-i3-layout-bindings).
+# It must come before the partials it copies from.
+include $XDG_RUNTIME_DIR/regolith/i3/layout-bindings
+
 # Include common partials
 include /usr/share/regolith/common/config.d/*
 

@@ -1,0 +1,2 @@
+scripts/regolith-i3-layout-bindings /usr/bin
+usr/share/regolith/i3/config.d/12_layout-bindings

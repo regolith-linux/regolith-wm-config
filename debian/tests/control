@@ -1,0 +1,6 @@
+Tests: layout-bindings-generate
+Depends: regolith-i3-layout-bindings, xkb-data
+
+Tests: layout-bindings-i3
+Depends: regolith-i3-layout-bindings, xkb-data, i3-wm, xserver-xorg-core, xserver-xorg-video-dummy, x11-xkb-utils, python3-xlib
+Restrictions: needs-root, allow-stderr
