@@ -1,11 +1,41 @@
-## Session // Window Snapshot // <><Prtscr> ##
+# Screenshot keys of the X11 session (gnome-flashback): Print, Shift+Print and
+# Alt+Print save the screen, an area or the focused window to the Pictures
+# folder; with Ctrl they copy it to the clipboard instead.
+
+## Session // Screenshot // Print ##
+set_from_resource $wm.binding.screenshot.save_screen wm.binding.screenshot.save_screen Print
+bindsym $wm.binding.screenshot.save_screen exec grimshot --notify save screen
+
+## Session // Screenshot Area // <Shift> Print ##
+set_from_resource $wm.binding.screenshot.save_area wm.binding.screenshot.save_area Shift+Print
+bindsym $wm.binding.screenshot.save_area exec grimshot --notify save area
+
+## Session // Screenshot Window // <Alt> Print ##
+set_from_resource $wm.binding.screenshot.save_window wm.binding.screenshot.save_window Alt+Print
+bindsym $wm.binding.screenshot.save_window exec grimshot --notify save active
+
+## Session // Copy Screenshot to Clipboard // <Ctrl> Print ##
+set_from_resource $wm.binding.screenshot.copy_screen wm.binding.screenshot.copy_screen Ctrl+Print
+bindsym $wm.binding.screenshot.copy_screen exec grimshot --notify copy screen
+
+## Session // Copy Area Screenshot to Clipboard // <Ctrl><Shift> Print ##
+set_from_resource $wm.binding.screenshot.copy_area wm.binding.screenshot.copy_area Ctrl+Shift+Print
+bindsym $wm.binding.screenshot.copy_area exec grimshot --notify copy area
+
+## Session // Copy Window Screenshot to Clipboard // <Ctrl><Alt> Print ##
+set_from_resource $wm.binding.screenshot.copy_window wm.binding.screenshot.copy_window Ctrl+Alt+Print
+bindsym $wm.binding.screenshot.copy_window exec grimshot --notify copy active
+
+# The earlier sway-only keys stay.
+
+## Session // Window Snapshot // <><Prtscr> ##
 set_from_resource $wm.binding.screenshot.window wm.binding.screenshot.window Print
 bindsym $mod+$wm.binding.screenshot.window exec grimshot copy active
 
-## Session // Screenshot // <><Shift><Prtscr> ##
+## Session // Screenshot Selection // <><Shift><Prtscr> ##
 set_from_resource $wm.binding.screenshot wm.binding.screenshot Shift+Print
 bindsym $mod+$wm.binding.screenshot exec grimshot --notify savecopy anything
 
-## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
+## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
 set_from_resource $wm.binding.screenshot.all wm.binding.screenshot.all Shift+Ctrl+Print
 bindsym $mod+$wm.binding.screenshot.all exec grimshot --notify save screen
