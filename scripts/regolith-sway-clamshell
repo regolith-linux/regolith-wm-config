@@ -9,6 +9,13 @@
 #   - wm.clamshell.enabled is set to true
 #   - An inbuilt display is found
 #   - More than one display is connected
+#
+# Otherwise the lid close action is the one systemd-logind is configured with,
+# as in the X11 session: HandleLidSwitchExternalPower on AC (falling back to
+# HandleLidSwitch, as logind does) and HandleLidSwitch on battery, both
+# "suspend" by default. regolith-powerd keeps logind from acting on the lid
+# itself. The resources wm.lidclose.action.power and wm.lidclose.action.battery,
+# when set, take precedence.
 
 ACTION_TYPE=$1
 
@@ -55,6 +62,14 @@ get_lid_close_cmd() {
       echo "$SHUTDOWN"
       ;;
 
+    "HYBRID_SLEEP")
+      echo "systemctl hybrid-sleep"
+      ;;
+
+    "SUSPEND_THEN_HIBERNATE")
+      echo "systemctl suspend-then-hibernate"
+      ;;
+
     *)
       exit_with_error "Invalid or missing value for resource wm.lidclose.action: $1"
   esac
@@ -76,9 +91,31 @@ lock_before_sleep() {
   echo "Locker still running after 5 seconds, continuing"
 }
 
+# Print logind's setting for the lid switch property $1 (HandleLidSwitch,
+# HandleLidSwitchExternalPower), or nothing when it is unset or unreadable.
+logind_lid_setting() {
+  busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager "$1" 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p'
+}
+
+# Print the clamshell action for a logind lid switch setting, or $2 for an
+# empty or unknown setting.
+logind_lid_action() {
+  case "$1" in
+    "ignore")                 echo "DO_NOTHING" ;;
+    "lock")                   echo "LOCK" ;;
+    "suspend" | "sleep")      echo "SLEEP" ;;
+    "hibernate")              echo "HIBERNATE" ;;
+    "hybrid-sleep")           echo "HYBRID_SLEEP" ;;
+    "suspend-then-hibernate") echo "SUSPEND_THEN_HIBERNATE" ;;
+    "poweroff" | "halt")      echo "SHUTDOWN" ;;
+    *)                        echo "$2" ;;
+  esac
+}
+
 exec_lid_close_action() {
   case "$1" in
-    "SLEEP" | "HIBERNATE")
+    "SLEEP" | "HIBERNATE" | "HYBRID_SLEEP" | "SUSPEND_THEN_HIBERNATE")
       lock_before_sleep
       ;;
   esac
@@ -101,8 +138,10 @@ DEFAULT_INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(
 INBUILT_DISPLAY=$( trawlcat wm.clamshell.display "$DEFAULT_INBUILT_DISPLAY" )
 DISPLAY_COUNT=$( swaymsg -t get_outputs --raw | jq 'length')
 CLAMSHELL_ENABLED=$( trawlcat wm.clamshell.enabled "true" )
-AC_ACTION=$( trawlcat wm.lidclose.action.power "LOCK" )
-BATTERY_ACTION=$( trawlcat wm.lidclose.action.battery "SLEEP" )
+LOGIND_BATTERY_ACTION=$( logind_lid_action "$( logind_lid_setting HandleLidSwitch )" "SLEEP" )
+LOGIND_AC_ACTION=$( logind_lid_action "$( logind_lid_setting HandleLidSwitchExternalPower )" "$LOGIND_BATTERY_ACTION" )
+AC_ACTION=$( trawlcat wm.lidclose.action.power "$LOGIND_AC_ACTION" )
+BATTERY_ACTION=$( trawlcat wm.lidclose.action.battery "$LOGIND_BATTERY_ACTION" )
 AC_ACTION_CMD=$( get_lid_close_cmd "$AC_ACTION" )
 BATTERY_ACTION_CMD=$( get_lid_close_cmd "$BATTERY_ACTION" )
 
