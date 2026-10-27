@@ -1,0 +1,2 @@
+scripts/regolith-i3-workspace-memory usr/bin
+usr/share/regolith/i3/config.d/40_workspace-memory
