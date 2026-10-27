@@ -1,5 +1,9 @@
 # Hide the mouse pointer if unused for a duration
+# wm.hide_cursor.timeout is in milliseconds. Earlier releases read the
+# misspelled wm.hide_cursor.timout, which still works; timeout wins if both
+# are set.
 set_from_resource $wm.hide_cursor.timout wm.hide_cursor.timout 5000
+set_from_resource $wm.hide_cursor.timeout wm.hide_cursor.timeout $wm.hide_cursor.timout
 set_from_resource $wm.hide_cursor.show_when_typing wm.hide_cursor.show_when_typing enable
-seat * hide_cursor $wm.hide_cursor.timout 
+seat * hide_cursor $wm.hide_cursor.timeout
 seat * hide_cursor when-typing $wm.hide_cursor.show_when_typing
