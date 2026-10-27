@@ -1,0 +1,521 @@
+#!/usr/bin/env python3
+#
+# regolith-i3-workspace-memory
+#
+# Moves workspaces back to their monitor when that monitor returns.
+#
+# When an output goes away (the monitor sleeps, the laptop is undocked, the
+# system suspends), i3 moves its workspaces to another output. When the output
+# comes back, i3 only moves back the workspaces assigned to it in the config
+# (`workspace N output X`); every other workspace stays where it is and the
+# returning output gets a new, empty workspace (regolith-desktop#605). i3
+# upstream declines to remember placements (i3/i3#4139). sway keeps an ordered
+# list of outputs per workspace and restores them by itself; this program gives
+# the Regolith i3 session the same behaviour.
+#
+# How it works:
+#   - Monitors are identified by their EDID, read from the RandR output
+#     property. Two monitors of the same model are told apart by their serial
+#     numbers, and a monitor that comes back on another connector is still
+#     recognised. Outputs without an EDID are identified by connector name.
+#   - Every workspace remembers the monitors it lived on, most preferred
+#     first. A workspace that i3 moves off a vanished monitor adds its new
+#     monitor at the end of its list; a workspace that the user moves between
+#     present monitors puts the new monitor first, so it stays there.
+#   - When a monitor appears, every workspace whose most preferred present
+#     monitor is the new one moves to it. Then each monitor shows the
+#     workspace it showed before the monitor left, and focus goes back to the
+#     window that had it.
+#   - Workspaces assigned to outputs in the i3 config are left to i3.
+#
+# It only acts on i3 events (it sleeps on the IPC socket otherwise), compares
+# the whole layout with the last one it saw instead of relying on the order of
+# the events, survives `i3-msg restart` and exits when i3 exits.
+#
+# The program only talks to i3 over IPC (python3-i3ipc) and reads EDIDs over
+# RandR (python3-xlib). It needs nothing else from this repository besides the
+# i3 partial that starts it, so it could also live in its own repository; it
+# ships from here as the regolith-i3-workspace-memory package.
+
+import hashlib
+import logging
+import os
+import re
+import socket
+import struct
+import sys
+import time
+from collections import Counter
+
+import i3ipc
+from Xlib import X, display as xdisplay
+
+log = logging.getLogger("regolith-i3-workspace-memory")
+
+# How long to wait for i3 to come back after `i3-msg restart`, and how often to
+# try in the meantime.
+RESTART_TIMEOUT = 60.0
+RESTART_RETRY_INTERVAL = 0.2
+
+# An EDID base block; extension blocks follow it but do not identify the
+# monitor any better.
+EDID_BLOCK_SIZE = 128
+
+
+def read_edids(output_names):
+    """Return {output name: EDID bytes} for the named outputs that have one."""
+    edids = {}
+    try:
+        dpy = xdisplay.Display()
+    except Exception as err:  # no $DISPLAY, or the X server is gone
+        log.warning("cannot read EDIDs, using connector names: %s", err)
+        return edids
+    try:
+        if not dpy.has_extension("RANDR"):
+            return edids
+        edid_atom = dpy.intern_atom("EDID", only_if_exists=True)
+        if edid_atom == X.NONE:
+            return edids
+        resources = dpy.screen().root.xrandr_get_screen_resources_current()
+        for output in resources.outputs:
+            info = dpy.xrandr_get_output_info(output,
+                                              resources.config_timestamp)
+            if info.name not in output_names:
+                continue
+            prop = dpy.xrandr_get_output_property(
+                output, edid_atom, X.AnyPropertyType, 0, EDID_BLOCK_SIZE // 4)
+            if len(prop.value) >= EDID_BLOCK_SIZE:
+                edids[info.name] = bytes(prop.value[:EDID_BLOCK_SIZE])
+    except Exception as err:
+        log.warning("cannot read EDIDs, using connector names: %s", err)
+    finally:
+        dpy.close()
+    return edids
+
+
+def describe_edid(edid):
+    """A readable, unique identity: manufacturer, product, serial and a digest.
+
+    The digest covers the whole base block, so monitors whose serial number
+    field is empty are still told apart by the serial string some of them
+    carry in a descriptor.
+    """
+    code = int.from_bytes(edid[8:10], "big")
+    vendor = "".join(chr(((code >> shift) & 0x1F) + ord("A") - 1)
+                     for shift in (10, 5, 0))
+    product = int.from_bytes(edid[10:12], "little")
+    serial = int.from_bytes(edid[12:16], "little")
+    digest = hashlib.sha1(edid).hexdigest()[:8]
+    return f"{vendor}-{product:04X}-{serial:08X}-{digest}"
+
+
+def monitor_identities(output_names):
+    """Return {output name: monitor identity} for the active outputs."""
+    edids = read_edids(output_names)
+    identities = {
+        name: describe_edid(edids[name]) if name in edids else f"output:{name}"
+        for name in output_names
+    }
+    # Monitors with byte-identical EDIDs cannot be told apart by it; add the
+    # connector so they at least keep their own workspaces while connected.
+    counts = Counter(identities.values())
+    for name, identity in identities.items():
+        if counts[identity] > 1:
+            identities[name] = f"{identity}@{name}"
+    return identities
+
+
+def tokenize(line):
+    """Split an i3 config line into words, honouring "quoted strings"."""
+    return [bare or re.sub(r"\\(.)", r"\1", quoted)
+            for quoted, bare in re.findall(r'"((?:[^"\\]|\\.)*)"|(\S+)', line)]
+
+
+def assigned_workspaces(config_reply):
+    """Return the workspace names assigned to outputs in the i3 config.
+
+    Uses the files i3 actually loaded, after variable substitution (i3 4.20
+    and later report them), so `set $ws ...` names and included files count.
+    """
+    files = config_reply.get("included_configs") or []
+    texts = [f.get("variable_replaced_contents") or f.get("raw_contents", "")
+             for f in files] or [config_reply.get("config", "")]
+    names = set()
+    for text in texts:
+        for line in text.replace("\\\n", " ").splitlines():
+            words = tokenize(line.strip())
+            # workspace <name> output <output> [<output> ...]
+            if (len(words) >= 4 and words[0] == "workspace"
+                    and words[2] == "output"):
+                names.add(words[1])
+    return names
+
+
+def is_assigned(name, num, assigned):
+    """Whether i3 places this workspace by itself (see get_assigned_output()).
+
+    An assignment matches the workspace by name, or, when it is all digits,
+    by workspace number ("workspace 1 output X" also covers "1: web").
+    """
+    return any(name == other
+               or (re.fullmatch(r"[0-9]+", other) and num == int(other))
+               for other in assigned)
+
+
+class Layout:
+    """The part of the i3 tree this program cares about, at one moment.
+
+    Everything is keyed by monitor identity rather than output name.
+    """
+
+    def __init__(self, tree, identities):
+        self.outputs = {}    # monitor identity -> output name
+        self.placement = {}  # workspace name -> monitor identity
+        self.visible = {}    # monitor identity -> visible workspace name
+        self.ids = {}        # workspace name -> i3 container id
+        self.nums = {}       # workspace name -> workspace number, -1 if none
+        for output in tree.nodes:
+            if output.type != "output" or output.name not in identities:
+                continue  # skips the internal __i3 output
+            monitor = identities[output.name]
+            self.outputs[monitor] = output.name
+            for content in output.nodes:
+                if content.type != "con":
+                    continue  # docks
+                for ws in content.nodes:
+                    self.placement[ws.name] = monitor
+                    self.ids[ws.name] = ws.id
+                    self.nums[ws.name] = ws.num
+                    if content.focus and content.focus[0] == ws.id:
+                        self.visible[monitor] = ws.name
+        # The focus, in a form that survives an i3 restart: the X window, or
+        # the workspace when it has no windows.
+        focused = tree.find_focused()
+        if focused is None:
+            self.focus = None
+        elif focused.window:
+            self.focus = ("window", focused.window)
+        else:
+            workspace = focused.workspace()
+            self.focus = ("workspace", workspace.name) if workspace else None
+
+    def rename(self, old, new):
+        for table in (self.placement, self.ids, self.nums):
+            if old in table:
+                table[new] = table.pop(old)
+        for monitor, name in self.visible.items():
+            if name == old:
+                self.visible[monitor] = new
+        if self.focus == ("workspace", old):
+            self.focus = ("workspace", new)
+
+
+class WorkspaceMemory:
+    """Where every workspace belongs, learned from the changes i3 reports."""
+
+    def __init__(self, i3):
+        self.i3 = i3
+        # workspace name -> the monitors it lived on, most preferred first
+        self.homes = {}
+        # monitor identity -> {monitor identity: visible workspace name} as it
+        # was just before that monitor went away
+        self.departures = {}
+        # The focus just before the first monitor went away, until the monitors
+        # come back or the user focuses something else. i3 does not keep the
+        # focus where it was when it moves the workspaces of a vanished output.
+        self.focus_before = None
+        self.layout = None
+        self._identities = {}
+
+    def attach(self, i3):
+        """Continue with a new connection, after an i3 restart."""
+        self.i3 = i3
+        if self.layout is not None:
+            # i3 rebuilds every container on restart; the old ids mean nothing.
+            self.layout.ids = {}
+
+    def read_layout(self, refresh_identities):
+        tree = self.i3.get_tree()
+        names = sorted(o.name for o in tree.nodes
+                       if o.type == "output" and not o.name.startswith("__"))
+        if refresh_identities or names != sorted(self._identities):
+            self._identities = monitor_identities(names)
+        return Layout(tree, self._identities)
+
+    def update(self, refresh_identities=False):
+        """Bring the memory up to date with i3, and restore what returned.
+
+        Runs on every relevant event. It compares the whole layout with the
+        previous one, so it does not depend on the order or the number of the
+        events i3 sends while it handles a monitor change.
+        """
+        current = self.read_layout(refresh_identities)
+        previous = self.layout
+        if previous is None:
+            for name, monitor in current.placement.items():
+                self.homes[name] = [monitor]
+            self.layout = current
+            return
+
+        self.follow_renames(previous, current)
+        left = previous.outputs.keys() - current.outputs.keys()
+        arrived = current.outputs.keys() - previous.outputs.keys()
+        for monitor in left:
+            log.info("monitor %s (%s) left", monitor,
+                     previous.outputs[monitor])
+            self.departures[monitor] = dict(previous.visible)
+        if left and self.focus_before is None:
+            self.focus_before = previous.focus
+        elif not left and not arrived and current.focus != previous.focus:
+            self.focus_before = None  # the user has moved on
+        self.learn(previous, current)
+        if arrived:
+            for monitor in arrived:
+                log.info("monitor %s (%s) arrived", monitor,
+                         current.outputs[monitor])
+            self.restore(current, arrived)
+        self.layout = current
+
+    def follow_renames(self, previous, current):
+        """Carry what is known about a workspace over to its new name."""
+        old_names = {cid: name for name, cid in previous.ids.items()}
+        for name, cid in current.ids.items():
+            old = old_names.get(cid)
+            if old is None or old == name:
+                continue
+            previous.rename(old, name)
+            if old in self.homes:
+                self.homes[name] = self.homes.pop(old)
+            for visible in self.departures.values():
+                for monitor, ws in visible.items():
+                    if ws == old:
+                        visible[monitor] = name
+            if self.focus_before == ("workspace", old):
+                self.focus_before = ("workspace", name)
+
+    def learn(self, previous, current):
+        for name, monitor in current.placement.items():
+            before = previous.placement.get(name)
+            homes = self.homes.get(name)
+            if before is None or homes is None:
+                # New (or created again after i3 closed it): it belongs where
+                # it was created.
+                self.homes[name] = [monitor]
+            elif monitor != before:
+                if before in current.outputs:
+                    # Its monitor is still here, so the user moved it.
+                    log.info("workspace %s now belongs to %s", name, monitor)
+                    if monitor in homes:
+                        homes.remove(monitor)
+                    homes.insert(0, monitor)
+                elif monitor not in homes:
+                    # i3 moved it off a monitor that went away.
+                    homes.append(monitor)
+        # Forget the workspaces i3 has closed.
+        for name in self.homes.keys() - current.placement.keys():
+            del self.homes[name]
+
+    def target(self, name, current):
+        """The most preferred present monitor of a workspace."""
+        for monitor in self.homes.get(name, ()):
+            if monitor in current.outputs:
+                return monitor
+        return None
+
+    def restore(self, current, arrived):
+        assigned = assigned_workspaces(self.i3.get_config().ipc_data)
+        moves = []
+        for name, monitor in current.placement.items():
+            if is_assigned(name, current.nums[name], assigned):
+                continue  # i3 places it by itself
+            home = self.target(name, current)
+            if home in arrived and home != monitor:
+                moves.append((name, home))
+        # What every monitor showed just before the returning ones left.
+        views = [self.departures.pop(monitor) for monitor in arrived
+                 if monitor in self.departures]
+        if not moves and not views:
+            return  # a monitor never seen before
+        focus = self.focus_before or current.focus
+        self.focus_before = None
+
+        visible_before = dict(current.visible)
+        for name, home in moves:
+            log.info("moving workspace %s back to %s (%s)", name, home,
+                     current.outputs[home])
+            if self.command('[con_id={}] move workspace to output "{}"'.format(
+                    current.ids[name], current.outputs[home])):
+                # Record the move as done, so it is not taken for the user's.
+                current.placement[name] = home
+
+        # Show again what each monitor showed before the monitor left.
+        moved = {name for name, _ in moves}
+        show = {}
+        for monitor in current.outputs:
+            wanted = next((view[monitor] for view in views if monitor in view),
+                          None)
+            if monitor in arrived:
+                if current.placement.get(wanted) != monitor:
+                    # What it showed is gone or lives elsewhere now: show a
+                    # returned workspace rather than the empty one i3 created.
+                    wanted = next((n for n, home in moves if home == monitor
+                                   and current.placement[n] == monitor), None)
+            elif visible_before.get(monitor) not in moved:
+                # The monitors that stayed only get their old workspace back
+                # if the one they show is leaving; anything else the user
+                # chose while the monitor was away.
+                continue
+            if wanted is not None and current.placement.get(wanted) == monitor:
+                show[monitor] = wanted
+        for name in show.values():
+            self.command("[con_id={}] focus".format(current.ids[name]))
+
+        # Finally give the focus back.
+        if focus is None:
+            return
+        kind, what = focus
+        if kind == "window":
+            self.command("[id={}] focus".format(what))
+        elif what in current.ids:
+            self.command("[con_id={}] focus".format(current.ids[what]))
+
+    def command(self, payload):
+        try:
+            replies = self.i3.command(payload)
+        except OSError as err:
+            log.warning("i3 command failed: %s: %s", payload, err)
+            return False
+        ok = all(reply.success for reply in replies)
+        if not ok:
+            log.warning("i3 command failed: %s: %s", payload,
+                        "; ".join(r.error or "" for r in replies))
+        return ok
+
+
+def i3_pid(socket_path):
+    """The PID of the i3 listening on the IPC socket, or None if unknown."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(socket_path)
+            creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                    struct.calcsize("3i"))
+    except OSError:
+        return None
+    pid, _uid, _gid = struct.unpack("3i", creds)
+    return pid or None  # 0: i3 runs in another PID namespace
+
+
+def i3_alive(pid):
+    """Whether the i3 process is still running.
+
+    A zombie counts as gone: whoever started i3 may not have reaped it yet.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass  # it exists
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            # The state follows the command name, which is in parentheses.
+            state = stat.read().rpartition(")")[2].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state not in ("Z", "X")
+
+
+def connect(socket_path=None, timeout=0.0, pid=None):
+    """Connect to i3, retrying until it answers or the timeout passes.
+
+    With the PID of an i3 that is restarting, give up and return None as soon
+    as that process is gone.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return i3ipc.Connection(socket_path)
+        except Exception:  # no socket yet, or nothing listening on it
+            if pid is not None and not i3_alive(pid):
+                return None
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(RESTART_RETRY_INTERVAL)
+
+
+def run(memory, i3):
+    """Handle i3 events until the connection ends.
+
+    Returns the change of the shutdown event ("exit" or "restart"), or None if
+    the connection ended without one.
+    """
+    shutdown = None
+
+    def on_change(refresh_identities):
+        def handler(conn, event):
+            try:
+                memory.update(refresh_identities)
+            except Exception:
+                # Keep running: the next event compares against the last
+                # layout that was read completely.
+                log.exception("cannot update the workspace memory")
+        return handler
+
+    def on_shutdown(conn, event):
+        nonlocal shutdown
+        shutdown = event.change
+
+    i3.on(i3ipc.Event.WORKSPACE, on_change(False))
+    # Focus changes inside a workspace send no workspace event, but the focus
+    # to give back when a monitor returns is the one from just before it left.
+    i3.on(i3ipc.Event.WINDOW_FOCUS, on_change(False))
+    i3.on(i3ipc.Event.OUTPUT, on_change(True))
+    i3.on(i3ipc.Event.SHUTDOWN, on_shutdown)
+    # Catch up with whatever changed while nobody was listening: before the
+    # program started, or while i3 was restarting.
+    on_change(True)(i3, None)
+    try:
+        # Returns when i3 closes the connection, on exit or restart.
+        i3.main()
+    except Exception as err:  # reset, or a reply cut short
+        log.warning("lost the connection to i3: %s", err)
+    return shutdown
+
+
+def main():
+    logging.basicConfig(level=logging.INFO,
+                        format="regolith-i3-workspace-memory: %(message)s")
+    try:
+        i3 = connect()
+    except Exception as err:
+        log.error("cannot connect to i3: %s", err)
+        return 1
+    socket_path = i3.socket_path
+    pid = i3_pid(socket_path)
+    memory = WorkspaceMemory(i3)
+    while True:
+        shutdown = run(memory, i3)
+        # A connection can end without a shutdown event while i3 restarts:
+        # i3 closes its clients before it unlinks its socket and execs, so a
+        # quick reconnect can reach the old socket and be reset. i3 restarts
+        # in place (same process), so it is restarting if its process is
+        # still alive; if it exits meanwhile, connect() gives up as soon as
+        # the process is gone.
+        if shutdown == "exit" or (shutdown is None and pid is not None
+                                  and not i3_alive(pid)):
+            return 0
+        log.info("i3 is restarting, reconnecting")
+        try:
+            i3 = connect(socket_path, RESTART_TIMEOUT, pid)
+        except Exception as err:
+            log.error("i3 did not come back after restarting: %s", err)
+            return 1
+        if i3 is None:
+            log.info("i3 exited")
+            return 0
+        pid = i3_pid(socket_path) or pid
+        memory.attach(i3)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
