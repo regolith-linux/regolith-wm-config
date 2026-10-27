@@ -6,7 +6,10 @@ set_from_resource $wm.xwayland.mode wm.xwayland.mode force
 xwayland $wm.xwayland.mode
 exec [ "$wm.xwayland.mode" = force ] && [ -n "${DISPLAY-}" ] && systemctl --user import-environment DISPLAY && systemctl --user start gnome-session-x11-services-ready.target
 
-exec_always systemctl restart --user regolith-init-kanshi.service
+# A reload resets the outputs to the sway configuration, so have kanshi
+# re-apply its profile. Reload it rather than restart it: quick successive
+# reloads would otherwise hit its start limit.
+exec_always systemctl --user reload-or-restart regolith-init-kanshi.service
 
 # Set the default input method to none, unless the user chose one with
 # im-config (kept in ~/.xinputrc)
