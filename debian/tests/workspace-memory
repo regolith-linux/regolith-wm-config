@@ -1,0 +1,210 @@
+#!/usr/bin/python3
+#
+# Runs i3 on a dummy X server with two outputs, starts
+# regolith-i3-workspace-memory against it, turns the second output off and on
+# again and checks that its workspace comes back, also after `i3-msg restart`,
+# and that the focus returns to the window that had it.
+
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+import i3ipc
+from Xlib import X, Xatom, display as xdisplay
+
+MODE = "1024x768"
+TIMEOUT = 20.0
+
+XORG_CONF = """\
+Section "Device"
+  Identifier "dummy"
+  Driver "dummy"
+  VideoRam 256000
+EndSection
+Section "Screen"
+  Identifier "screen"
+  Device "dummy"
+  DefaultDepth 24
+  SubSection "Display"
+    Depth 24
+    Virtual 4096 1024
+  EndSubSection
+EndSection
+"""
+
+I3_CONFIG = """\
+font pango:monospace 8
+ipc-socket {socket}
+"""
+
+
+def wait_for(what, check, timeout=TIMEOUT):
+    deadline = time.monotonic() + timeout
+    while True:
+        value = check()
+        if value:
+            return value
+        if time.monotonic() > deadline:
+            sys.exit(f"FAIL: timed out waiting for {what}")
+        time.sleep(0.2)
+
+
+def xrandr(*args):
+    subprocess.run(["xrandr", *args], check=True)
+
+
+def make_edid(product, serial):
+    """A 128-byte EDID base block with the given product and serial."""
+    edid = bytearray(128)
+    edid[0:8] = b"\x00\xff\xff\xff\xff\xff\xff\x00"
+    code = sum((ord(c) - ord("A") + 1) << shift
+               for c, shift in zip("RGL", (10, 5, 0)))
+    edid[8:10] = code.to_bytes(2, "big")
+    edid[10:12] = product.to_bytes(2, "little")
+    edid[12:16] = serial.to_bytes(4, "little")
+    edid[18:20] = b"\x01\x04"
+    edid[127] = -sum(edid) % 256
+    return bytes(edid)
+
+
+def set_edids(dpy, edids):
+    root = dpy.screen().root
+    atom = dpy.intern_atom("EDID")
+    resources = root.xrandr_get_screen_resources_current()
+    for output in resources.outputs:
+        name = dpy.xrandr_get_output_info(
+            output, resources.config_timestamp).name
+        if name in edids:
+            dpy.xrandr_change_output_property(
+                output, atom, Xatom.INTEGER, X.PropModeReplace,
+                (8, edids[name]))
+    dpy.sync()
+
+
+def open_window(dpy, i3, workspace):
+    i3.command(f"workspace {workspace}")
+    window = dpy.screen().root.create_window(
+        0, 0, 100, 100, 0, dpy.screen().root_depth)
+    window.map()
+    dpy.sync()
+    wait_for(f"a window on workspace {workspace}",
+             lambda: i3.get_tree().find_by_window(window.id))
+    return window.id
+
+
+def output_of(i3, workspace):
+    for ws in i3.get_workspaces():
+        if ws.name == workspace:
+            return ws.output
+    return None
+
+
+def check_cycle(i3, window):
+    """Turn DUMMY1 off and on; workspace 2 must leave and come back."""
+    xrandr("--output", "DUMMY1", "--off")
+    wait_for("workspace 2 to move to DUMMY0",
+             lambda: output_of(i3, "2") == "DUMMY0")
+    xrandr("--output", "DUMMY1", "--mode", MODE, "--right-of", "DUMMY0")
+    wait_for("workspace 2 to return to DUMMY1",
+             lambda: output_of(i3, "2") == "DUMMY1")
+    wait_for("workspace 2 to be shown on DUMMY1", lambda: any(
+        ws.name == "2" and ws.visible for ws in i3.get_workspaces()))
+    wait_for("the focus to return to the window on workspace 2",
+             lambda: i3.get_tree().find_focused().window == window)
+    names = sorted(ws.name for ws in i3.get_workspaces())
+    if names != ["1", "2"]:
+        sys.exit(f"FAIL: unexpected workspaces {names}")
+
+
+def main():
+    tmp = os.environ.get("AUTOPKGTEST_TMP") or tempfile.mkdtemp()
+    conf = os.path.join(tmp, "xorg.conf")
+    with open(conf, "w") as f:
+        f.write(XORG_CONF)
+    socket = os.path.join(tmp, "i3.sock")
+    with open(os.path.join(tmp, "i3.conf"), "w") as f:
+        f.write(I3_CONFIG.format(socket=socket))
+
+    read_fd, write_fd = os.pipe()
+    xorg = subprocess.Popen(
+        ["Xorg", "-displayfd", str(write_fd), "-config", conf, "-noreset",
+         "-nolisten", "tcp", "-logfile", os.path.join(tmp, "Xorg.log")],
+        pass_fds=(write_fd,), stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL)
+    os.close(write_fd)
+    with os.fdopen(read_fd) as f:
+        number = f.readline().strip()
+    if not number:
+        sys.exit("FAIL: Xorg did not start, see " + tmp + "/Xorg.log")
+    os.environ["DISPLAY"] = ":" + number
+    os.environ["I3SOCK"] = socket
+
+    procs = [xorg]
+    try:
+        xrandr("--addmode", "DUMMY1", MODE)
+        xrandr("--output", "DUMMY0", "--mode", MODE)
+        xrandr("--output", "DUMMY1", "--mode", MODE, "--right-of", "DUMMY0")
+        dpy = xdisplay.Display()
+        set_edids(dpy, {"DUMMY0": make_edid(1, 1), "DUMMY1": make_edid(1, 2)})
+
+        procs.insert(0, subprocess.Popen(
+            ["i3", "-c", os.path.join(tmp, "i3.conf")],
+            stdout=subprocess.DEVNULL))
+        i3 = wait_for("i3", lambda: try_connect())
+        i3.command("focus output DUMMY0")
+        open_window(dpy, i3, "1")
+        i3.command("focus output DUMMY1")
+        window = open_window(dpy, i3, "2")
+        if output_of(i3, "2") != "DUMMY1":
+            sys.exit("FAIL: workspace 2 did not start on DUMMY1")
+
+        memory = subprocess.Popen(["regolith-i3-workspace-memory"])
+        procs.insert(0, memory)
+        time.sleep(1)
+
+        check_cycle(i3, window)
+        print("PASS: workspace returns to its monitor")
+
+        i3.command("restart")
+        time.sleep(1)
+        i3 = wait_for("i3 after restart", lambda: try_connect())
+        if memory.poll() is not None:
+            sys.exit("FAIL: regolith-i3-workspace-memory exited on restart")
+        check_cycle(i3, window)
+        print("PASS: still works after i3-msg restart")
+
+        # A second window on workspace 2 takes the focus without any workspace
+        # event; the focus must come back to it, not to the first window.
+        window = open_window(dpy, i3, "2")
+        check_cycle(i3, window)
+        print("PASS: focus returns to the window focused last")
+
+        i3.command("exit")
+        try:
+            status = memory.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            sys.exit("FAIL: regolith-i3-workspace-memory outlived i3")
+        if status != 0:
+            sys.exit(f"FAIL: regolith-i3-workspace-memory exited with {status}")
+        print("PASS: exits with i3")
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+
+def try_connect():
+    try:
+        return i3ipc.Connection()
+    except Exception:
+        return None
+
+
+if __name__ == "__main__":
+    main()
