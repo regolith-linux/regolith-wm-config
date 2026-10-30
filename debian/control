@@ -2,7 +2,11 @@ Source: regolith-wm-config
 Section: x11
 Priority: optional
 Maintainer: Ken Gilmer <kgilmer@gmail.com>
-Build-Depends: debhelper (>= 11)
+Build-Depends: debhelper (>= 11),
+  file <!nocheck>,
+  jq <!nocheck>,
+  libxml2-utils <!nocheck>,
+  python3 <!nocheck>
 Standards-Version: 4.1.3
 Homepage: https://github.com/regolith-linux/regolith-wm-config
 
@@ -351,9 +355,13 @@ Depends: ${misc:Depends},
     libxml2-utils,
     file,
     jq,
+    python3,
     trawlcat,
-    regolith-wm-config
-Description: Configuration for providing media key functionality
+    regolith-wm-config,
+    x11-common
+Description: Draw the Regolith wallpaper in sway
+ Sets the sway background from the regolith.wallpaper Xresources: an image,
+ a colour, or a gradient between two colours, as in the X11 session.
 
 
 Package: regolith-sway-polkit
