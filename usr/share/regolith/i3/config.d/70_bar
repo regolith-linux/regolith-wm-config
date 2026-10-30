@@ -15,6 +15,20 @@ set_from_resource $wm.bar.stripworkspacenumbers wm.bar.stripworkspacenumbers yes
 set_from_resource $wm.bar.mode wm.bar.mode dock
 set_from_resource $wm.bar.workspace_min_width wm.bar.workspace_min_width 36
 
+# Mouse wheel over the bar. Each resource is the bar binding for one wheel direction.
+# The defaults only run "nop" when the wheel click is released, which leaves the bar's
+# own behaviour alone: scrolling over the workspace buttons switches workspaces.
+# To stop that, bind the press instead, e.g. in ~/.config/regolith3/Xresources:
+#   wm.bar.binding.wheel_up: button4 nop
+#   wm.bar.binding.wheel_down: button5 nop
+#   wm.bar.binding.wheel_left: button6 nop
+#   wm.bar.binding.wheel_right: button7 nop
+# Scrolling over a status block still goes to that block.
+set_from_resource $wm.bar.binding.wheel_up wm.bar.binding.wheel_up --release button4 nop
+set_from_resource $wm.bar.binding.wheel_down wm.bar.binding.wheel_down --release button5 nop
+set_from_resource $wm.bar.binding.wheel_left wm.bar.binding.wheel_left --release button6 nop
+set_from_resource $wm.bar.binding.wheel_right wm.bar.binding.wheel_right --release button7 nop
+
 # i3xrocks config file. Override this for a custom status bar generator.
 set_from_resource $wm.bar.status_command wm.bar.status_command i3xrocks -u ~/.config/regolith3/i3xrocks/conf.d -d /usr/share/i3xrocks/conf.d
 
@@ -28,6 +42,10 @@ bar {
   tray_output $wm.bar.trayoutput
   strip_workspace_numbers $wm.bar.stripworkspacenumbers
   workspace_min_width $wm.bar.workspace_min_width
+  bindsym $wm.bar.binding.wheel_up
+  bindsym $wm.bar.binding.wheel_down
+  bindsym $wm.bar.binding.wheel_left
+  bindsym $wm.bar.binding.wheel_right
 
   colors {
       background $wm.bar.background.color
