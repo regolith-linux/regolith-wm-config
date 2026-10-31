@@ -1,0 +1,3 @@
+# Move workspaces back to their monitor when it returns after sleep, undocking
+# or suspend, as sway does.
+exec --no-startup-id regolith-i3-workspace-memory

@@ -1,0 +1,9 @@
+Tests: workspace-memory
+Depends: regolith-i3-workspace-memory,
+  i3-wm,
+  python3-i3ipc,
+  python3-xlib,
+  x11-xserver-utils,
+  xserver-xorg-core,
+  xserver-xorg-video-dummy
+Restrictions: needs-root, allow-stderr, skippable

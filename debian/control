@@ -46,7 +46,8 @@ Recommends: regolith-i3-compositor,
   regolith-i3-ilia,
   regolith-i3-next-workspace,
   regolith-i3-session,
-  regolith-i3-unclutter
+  regolith-i3-unclutter,
+  regolith-i3-workspace-memory
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -437,3 +438,14 @@ Depends: ${misc:Depends},
   regolith-wm-config,
   grimshot
 Description: Enable window and screen captures
+
+Package: regolith-i3-workspace-memory
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  python3,
+  python3-i3ipc,
+  python3-xlib
+Description: Return workspaces to their monitor in i3
+ Moves workspaces back to the monitor they were on when that monitor
+ returns after sleep, undocking or suspend, as the sway session does.
