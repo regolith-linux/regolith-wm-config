@@ -143,6 +143,13 @@ def main():
 
     procs = [xorg]
     try:
+        # xserver-xorg-video-dummy only has RandR outputs from 0.4.0 on
+        # (jammy ships 0.3.8), so there is no second monitor to unplug.
+        query = subprocess.run(["xrandr", "--query"], check=True,
+                               capture_output=True, text=True).stdout
+        if "DUMMY1 " not in query:
+            print("SKIP: the dummy X driver has no RandR outputs")
+            sys.exit(77)
         xrandr("--addmode", "DUMMY1", MODE)
         xrandr("--output", "DUMMY0", "--mode", MODE)
         xrandr("--output", "DUMMY1", "--mode", MODE, "--right-of", "DUMMY0")
