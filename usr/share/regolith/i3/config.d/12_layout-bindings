@@ -1,0 +1,9 @@
+###############################################################################
+# Key bindings follow the active keyboard layout
+###############################################################################
+#
+# i3 resolves every bindsym key in the first keyboard layout. This keeps a copy
+# of the bindings for the other layouts (and the US key positions for layouts
+# without Latin letters) in the file included at the top of
+# /etc/regolith/i3/config, and updates it when the keyboard layouts change.
+exec_always --no-startup-id /usr/bin/regolith-i3-layout-bindings --watch
