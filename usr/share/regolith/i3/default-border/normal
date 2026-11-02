@@ -1,0 +1,2 @@
+# Included by 40_default-style when wm.window.border.style is normal.
+default_border normal $wm.window.border.size

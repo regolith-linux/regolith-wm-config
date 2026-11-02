@@ -5,14 +5,19 @@ for_window [class="floating_window"] floating enable
 # Set titlebar mode
 set_from_resource $wm.floatingwindow.border.style wm.floatingwindow.border.style pixel
 set_from_resource $wm.floatingwindow.border.size wm.floatingwindow.border.size 1
-default_floating_border $wm.floatingwindow.border.style $wm.floatingwindow.border.size
 set_from_resource $wm.window.border.style wm.window.border.style pixel
 set_from_resource $wm.window.border.size wm.window.border.size 1
-default_border $wm.window.border.style $wm.window.border.size
+# i3 takes no size with the none style, so each style has its own
+# default_border and default_floating_border line.
+include /usr/share/regolith/i3/default-border/$wm.window.border.style
+include /usr/share/regolith/i3/default-floating-border/$wm.floatingwindow.border.style
 
-# Work-around for bug in 4.21, remove when fixed
-# See https://github.com/i3/i3/issues/5149
-for_window [all] border pixel $wm.window.border.size
+# Apply the configured borders to every new window, including windows that ask
+# to draw their own decorations: tiled windows get wm.window.border.*,
+# floating windows wm.floatingwindow.border.*. Without a size, border uses the
+# size of the matching default_border or default_floating_border line.
+for_window [tiling] border $wm.window.border.style
+for_window [floating] border $wm.floatingwindow.border.style
 
 # Enable popup during fullscreen
 set_from_resource $wm.gaps.popup_during_fullscreen wm.gaps.popup_during_fullscreen smart

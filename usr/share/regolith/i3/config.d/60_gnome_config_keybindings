@@ -27,7 +27,7 @@ set_from_resource $wm.binding.files wm.binding.files Shift+n
 set_from_resource $wm.program.files wm.program.files /usr/bin/nautilus --new-window
 bindsym $mod+$wm.binding.files exec --no-startup-id $wm.program.files
 
-for_window [class="gnome-control-center"] floating enable
+for_window [class="gnome-control-center"] floating enable, border $wm.floatingwindow.border.style
 
 set_from_resource $wm.program.media-keys wm.program.media-keys /usr/libexec/gnome-flashback-media-keys
 exec --no-startup-id $wm.program.media-keys

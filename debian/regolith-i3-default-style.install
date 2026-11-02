@@ -1,1 +1,3 @@
 usr/share/regolith/i3/config.d/40_default-style
+usr/share/regolith/i3/default-border
+usr/share/regolith/i3/default-floating-border

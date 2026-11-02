@@ -1,0 +1,2 @@
+# Included by 40_default-style when wm.floatingwindow.border.style is normal.
+default_floating_border normal $wm.floatingwindow.border.size
