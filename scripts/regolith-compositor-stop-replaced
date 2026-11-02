@@ -1,0 +1,43 @@
+#!/bin/sh
+# Stop the compositor of a regolith-compositor provider that has been
+# replaced by another one during the session.
+#
+# The i3 config runs this before /usr/share/regolith-compositor/init on
+# every start, reload and restart. Each provider's init only stops its own
+# compositor, so after installing another provider (which removes the old
+# one) the old compositor kept running until the next login, and the new one
+# could not start next to it ("Another composite manager is already
+# running"); after switching to regolith-compositor-none nothing stopped it.
+#
+# The installed provider is remembered for the session. When it differs from
+# the last one seen, the old provider's compositor is stopped. A compositor
+# that Regolith didn't start, such as one the user runs alongside
+# regolith-compositor-none, is left alone.
+
+INIT=/usr/share/regolith-compositor/init
+[ -n "${XDG_RUNTIME_DIR-}" ] || exit 0
+STATE=$XDG_RUNTIME_DIR/regolith-compositor-provider
+
+provider=$(dpkg-query -S "$INIT" 2> /dev/null | cut -d: -f1)
+[ -n "$provider" ] || exit 0
+previous=$(cat "$STATE" 2> /dev/null)
+printf '%s\n' "$provider" > "$STATE"
+[ -n "$previous" ] && [ "$previous" != "$provider" ] || exit 0
+
+case $previous in
+  regolith-compositor-picom-glx)
+    systemctl --user stop regolith-compositor-picom.service 2> /dev/null
+    compositor=picom ;;
+  regolith-compositor-compton-glx) compositor=compton ;;
+  regolith-compositor-xcompmgr) compositor=xcompmgr ;;
+  *) exit 0 ;;
+esac
+
+uid=$(id -u)
+pkill -x -U "$uid" "$compositor" || exit 0
+# Wait for it to go, so that the new compositor can take over the display
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  pgrep -x -U "$uid" "$compositor" > /dev/null || exit 0
+  sleep 0.1
+done
+pkill -KILL -x -U "$uid" "$compositor"

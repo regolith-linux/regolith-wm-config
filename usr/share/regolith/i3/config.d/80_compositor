@@ -1,3 +1,4 @@
-# Start the installed regolith-compositor
+# Start the installed regolith-compositor, first stopping the compositor of a
+# provider that another one replaced since the last start
 set_from_resource $wm.program.compositor wm.program.compositor /usr/share/regolith-compositor/init
-exec_always --no-startup-id $wm.program.compositor
+exec_always --no-startup-id regolith-compositor-stop-replaced; $wm.program.compositor

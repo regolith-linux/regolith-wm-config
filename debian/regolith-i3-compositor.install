@@ -1,1 +1,2 @@
 /usr/share/regolith/i3/config.d/80_compositor
+scripts/regolith-compositor-stop-replaced usr/bin
