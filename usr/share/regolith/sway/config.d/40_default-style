@@ -1,6 +1,8 @@
-# Provide window class to float above tiled windows
+# Provide window class to float above tiled windows. class matches XWayland
+# windows only; native Wayland windows use the same name as their app_id
 floating_maximum_size -1 x -1
 for_window [class="floating_window"] floating enable
+for_window [app_id="floating_window"] floating enable
 
 # Set titlebar mode
 set_from_resource $wm.floatingwindow.border.style wm.floatingwindow.border.style pixel
