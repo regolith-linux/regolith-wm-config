@@ -2,17 +2,19 @@
 set_from_resource $wm.resize.small wm.resize.small 6
 set_from_resource $wm.resize.large wm.resize.large 24
 mode "Resize Mode" {
-        # These bindings trigger as soon as you enter the resize mode
+        # These bindings trigger as soon as you enter the resize mode.
+        # Up and k make the window taller, Down and j shorter; Left and h
+        # make it narrower, Right and l wider.
 
         ## Resize // Resize Window // ↑ ↓ ← → ##
         bindsym Left resize shrink width $wm.resize.small px or $wm.resize.small ppt
-        bindsym Down resize grow height $wm.resize.small px or $wm.resize.small ppt
-        bindsym Up resize shrink height $wm.resize.small px or $wm.resize.small ppt
+        bindsym Down resize shrink height $wm.resize.small px or $wm.resize.small ppt
+        bindsym Up resize grow height $wm.resize.small px or $wm.resize.small ppt
         bindsym Right resize grow width $wm.resize.small px or $wm.resize.small ppt
 
         bindsym Shift+Left resize shrink width $wm.resize.large px or $wm.resize.large ppt
-        bindsym Shift+Down resize grow height $wm.resize.large px or $wm.resize.large ppt
-        bindsym Shift+Up resize shrink height $wm.resize.large px or $wm.resize.large ppt
+        bindsym Shift+Down resize shrink height $wm.resize.large px or $wm.resize.large ppt
+        bindsym Shift+Up resize grow height $wm.resize.large px or $wm.resize.large ppt
         bindsym Shift+Right resize grow width $wm.resize.large px or $wm.resize.large ppt
 
         ## Resize // Resize Window // k j h l ##
