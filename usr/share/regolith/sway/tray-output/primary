@@ -1,0 +1,2 @@
+# Included by 70_bar_i3status-rs when wm.bar.trayoutput is primary.
+set $wm.bar.trayoutput *
