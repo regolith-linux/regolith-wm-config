@@ -200,13 +200,25 @@ if [[ -z $wallpaper ]]; then
 fi
 
 rm -f "$GRADIENT_DIR"/gradient-*.png
+# A GNOME wallpaper XML file (a slideshow, root element <background>, or a
+# wallpaper list, <wallpapers>) names the images to draw. Any other file is
+# an image; SVG images are XML too, so the root element decides.
 is_xml=false
-if file -b "$wallpaper" | grep -q text && xmllint --noout "$wallpaper" 2> /dev/null; then
-  is_xml=true
+if file -b "$wallpaper" | grep -q text; then
+  case $(xmllint --xpath "name(/*)" "$wallpaper" 2> /dev/null) in
+    background | wallpapers) is_xml=true ;;
+  esac
 fi
 
 if [[ $is_xml == true ]]; then
+  # The largest size, else the first image of a slideshow (X11 shows the
+  # one for the time of day)
   image_path=$(xmllint "$wallpaper" --xpath "string(*//size[last()]/text())")
+  [[ -n $image_path ]] || image_path=$(xmllint "$wallpaper" --xpath "normalize-space((//static/file)[1])")
+  if [[ -z $image_path ]]; then
+    warn "regolith.wallpaper.file: no image in '$wallpaper'"
+    exec swaymsg output "*" background "$color" solid_color
+  fi
   swaymsg output "*" background "$image_path" "$mode" "$color"
   while read -r name width height; do
     wallpaper_file=$(xmllint "$wallpaper" --xpath "string(*//size[@width=$width][@height=$height]/text())")
