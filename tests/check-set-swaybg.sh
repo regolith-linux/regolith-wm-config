@@ -178,6 +178,45 @@ run "regolith.wallpaper.file: $WORK/wall.xml" 'regolith.wallpaper.color.primary:
 expect 'XML: largest size on all outputs' "output * background $WORK/large.png fill #ff0000"
 expect 'XML: exact size on the output' "output \"Virtual-1\" background $WORK/small.png fill #ff0000"
 
+# A GNOME slideshow as Ubuntu ships it (<file>, no sizes): its first image
+cat > "$WORK/slideshow.xml" <<EOF
+<background>
+  <starttime>
+    <year>2009</year><month>08</month><day>04</day>
+    <hour>00</hour><minute>00</minute><second>00</second>
+  </starttime>
+  <static>
+    <duration>1795.0</duration>
+    <file>$WORK/first.png</file>
+  </static>
+  <transition>
+    <duration>5.0</duration>
+    <from>$WORK/first.png</from>
+    <to>$WORK/second.png</to>
+  </transition>
+  <static>
+    <duration>1795.0</duration>
+    <file>$WORK/second.png</file>
+  </static>
+</background>
+EOF
+run "regolith.wallpaper.file: $WORK/slideshow.xml"
+expect 'slideshow: first image' "output * background $WORK/first.png fill #000000"
+printf '<background><starttime/></background>\n' > "$WORK/empty.xml"
+run "regolith.wallpaper.file: $WORK/empty.xml" 'regolith.wallpaper.color.primary: red'
+expect 'XML without an image: colour' 'output * background #ff0000 solid_color'
+expect_warning 'XML without an image: warning' "no image in '$WORK/empty.xml'"
+
+# An SVG image is XML, but not a wallpaper XML file: drawn as an image
+cat > "$WORK/wall.svg" <<'EOF'
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40" viewBox="0 0 64 40">
+  <rect width="64" height="40" fill="#2e3440"/>
+</svg>
+EOF
+run "regolith.wallpaper.file: $WORK/wall.svg" 'regolith.wallpaper.color.primary: red'
+expect 'SVG image' "output * background $WORK/wall.svg fill #ff0000"
+
 # Placement: regolith.wallpaper.mode, else GNOME's picture-options
 run "regolith.wallpaper.file: $WORK/wall.png" 'regolith.wallpaper.options: centered'
 expect 'options centered' "output * background $WORK/wall.png center #000000"
