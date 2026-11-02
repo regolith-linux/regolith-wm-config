@@ -33,9 +33,12 @@ on_battery() {
   [[ $? -eq 1 ]]
 }
 
+# The lock program is wm.program.lock_sway, as for the lock key. When it is
+# unset, the default is regolith-sway-gtklock, from the regolith-sway-gtklock
+# package; set wm.program.lock_sway to use another lock application.
 get_lid_close_cmd() {
   # Actions to take based on the value of wm.lidclose.action
-  local DEFAULT_LOCK="gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+  local DEFAULT_LOCK="regolith-sway-gtklock"
   local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK")
   local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
   local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
@@ -80,7 +83,7 @@ get_lid_close_cmd() {
 # compositor has confirmed the lock; a locker that does not daemonize keeps
 # running and the bounded wait just times out.
 lock_before_sleep() {
-  local DEFAULT_LOCK="gtklock -d --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)"
+  local DEFAULT_LOCK="regolith-sway-gtklock -d"
   local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK" )
   $LOCK &
   local LOCK_PID=$!

@@ -1,1 +1,2 @@
 usr/share/regolith/sway/config.d/42_gtklock
+scripts/regolith-sway-gtklock     usr/bin

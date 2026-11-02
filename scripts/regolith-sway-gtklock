@@ -1,0 +1,33 @@
+#!/bin/sh
+# Lock the sway session with gtklock, showing the lock-screen wallpaper
+# (regolith.lockscreen.wallpaper.file), as the X11 lock screen does.
+#
+# This script is for gtklock only (--background is gtklock's option). It is
+# the default of wm.program.lock_sway, set in 42_gtklock, and of the lid
+# close script's lock, and it ships with that partial in the
+# regolith-sway-gtklock package. To use another lock application, set
+# wm.program.lock_sway to its command; support for another locker belongs in
+# its own script and package, next to this one.
+#
+# The path goes to gtklock as a single argument, so it may contain spaces,
+# and a leading ~ is expanded to the home directory. When the resource is
+# unset or the file doesn't exist, gtklock still starts, just without the
+# image: a wallpaper setting must never keep the session from locking.
+#
+# Arguments are passed on to gtklock (for example -d, to return once the
+# session is locked).
+
+wallpaper=$(trawlcat regolith.lockscreen.wallpaper.file "" 2> /dev/null)
+# shellcheck disable=SC2088 # the resource holds a literal ~
+case $wallpaper in
+  "~/"*) wallpaper=$HOME/${wallpaper#"~/"} ;;
+esac
+
+if [ -n "$wallpaper" ] && [ -f "$wallpaper" ]; then
+  exec gtklock "$@" --background "$wallpaper"
+fi
+
+if [ -n "$wallpaper" ]; then
+  echo "regolith-sway-gtklock: regolith.lockscreen.wallpaper.file: no such file: '$wallpaper'" >&2
+fi
+exec gtklock "$@"

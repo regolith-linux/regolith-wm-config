@@ -1,4 +1,4 @@
 ## Session // Lock Screen // <> Escape ##
 set_from_resource $wm.binding.lock wm.binding.lock Escape
-set_from_resource $wm.program.lock_sway wm.program.lock_sway gtklock --background $(trawlcat regolith.lockscreen.wallpaper.file /dev/null)
+set_from_resource $wm.program.lock_sway wm.program.lock_sway regolith-sway-gtklock
 bindsym $mod+$wm.binding.lock exec $wm.program.lock_sway
