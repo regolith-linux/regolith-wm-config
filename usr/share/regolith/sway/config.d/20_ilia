@@ -1,5 +1,7 @@
-# Load stylesheet if exists
-set_from_resource $ilia.stylesheet ilia.stylesheet
+# Load stylesheet if exists. sway needs a fallback: without a stylesheet the
+# fallback expands to nothing in the launcher's shell, so ilia gets a bare -t
+# and uses its built-in style, as it does in i3.
+set_from_resource $ilia.stylesheet ilia.stylesheet ${REGOLITH_NO_ILIA_STYLESHEET}
 
 ## Launch // Application // <> Space ##
 set_from_resource $wm.binding.launcher.app wm.binding.launcher.app space
