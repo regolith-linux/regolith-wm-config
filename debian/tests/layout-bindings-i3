@@ -1,0 +1,98 @@
+#!/bin/sh
+# regolith-i3-layout-bindings with a real i3 and X server: key presses (XTEST, so
+# they carry the locked XKB group like a real keyboard) must reach the
+# bindings in every layout, and a layout change must update the copies.
+set -eu
+tmp=$(mktemp -d)
+mkdir -m 700 "$tmp/run"
+export XDG_RUNTIME_DIR="$tmp/run" HOME="$tmp"
+unset I3SOCK
+pids=""
+cleanup() { for p in $pids; do kill "$p" 2>/dev/null || true; done; rm -rf "$tmp"; }
+trap cleanup EXIT
+fail() { echo "FAIL: $*"; [ -f "$tmp/i3.log" ] && tail -40 "$tmp/i3.log"; exit 1; }
+
+# Xorg with the dummy driver: Xvfb ignores keymap changes.
+cat > "$tmp/xorg.conf" <<'XORG'
+Section "Device"
+    Identifier "dummy"
+    Driver "dummy"
+EndSection
+Section "ServerFlags"
+    Option "AutoAddDevices" "false"
+EndSection
+XORG
+export DISPLAY=:87
+Xorg "$DISPLAY" -config "$tmp/xorg.conf" -logfile "$tmp/xorg.log" -nolisten tcp -noreset > /dev/null 2>&1 & pids="$pids $!"
+for i in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
+xdpyinfo >/dev/null 2>&1 || { tail -20 "$tmp/xorg.log"; fail "Xorg did not start"; }
+setlayouts() { setxkbmap -rules evdev -model pc105 -layout "$1"; }
+setlayouts ru,us
+
+cat > "$tmp/config" <<'CFG'
+font pango:monospace 8
+include $XDG_RUNTIME_DIR/regolith/i3/layout-bindings
+bindsym Mod4+z nop focus-child
+bindsym Mod4+bracketleft nop bracket
+bindsym Mod4+Return nop return
+exec_always regolith-i3-layout-bindings --watch
+CFG
+i3 -c "$tmp/config" > "$tmp/i3.log" 2>&1 & pids="$pids $!"
+frag="$XDG_RUNTIME_DIR/regolith/i3/layout-bindings"
+for i in $(seq 50); do grep -q "Group1+Mod4+52" "$frag" 2>/dev/null && break; sleep 0.2; done
+grep -q "bindcode Group1+Mod4+52 nop focus-child" "$frag" || fail "no Russian fallback in the fragment"
+sleep 1
+
+# press KEYCODE [GROUP]: lock the XKB group, press Super+KEYCODE, print the
+# command of the binding i3 ran (or nothing).
+press() {
+    i3-msg -t subscribe -m '["binding"]' > "$tmp/ev" 2>/dev/null & sub=$!
+    sleep 0.3
+    python3 - "$1" "$2" <<'PY'
+import ctypes, sys, time
+from Xlib import X, display
+from Xlib.ext import xtest
+x11 = ctypes.CDLL("libX11.so.6")
+x11.XOpenDisplay.restype = ctypes.c_void_p
+d = x11.XOpenDisplay(None)
+x11.XkbLockGroup(ctypes.c_void_p(d), 0x100, int(sys.argv[2]))
+x11.XSync(ctypes.c_void_p(d), 0)
+time.sleep(0.2)
+dpy = display.Display()
+from Xlib import XK
+win = dpy.keysym_to_keycode(XK.string_to_keysym("Super_L"))
+for kc, kind in ((win, X.KeyPress), (int(sys.argv[1]), X.KeyPress),
+                 (int(sys.argv[1]), X.KeyRelease), (win, X.KeyRelease)):
+    xtest.fake_input(dpy, kind, kc)
+    dpy.sync()
+    time.sleep(0.05)
+PY
+    sleep 0.5
+    kill "$sub" 2>/dev/null || true
+    wait "$sub" 2>/dev/null || true
+    python3 -c 'import json,sys
+for l in open(sys.argv[1]):
+    l = l.strip()
+    if l.startswith("{") and "binding" in l:
+        print(json.loads(l)["binding"]["command"]); break' "$tmp/ev"
+}
+expect() { got=$(press "$1" "$2"); [ "$got" = "$3" ] || fail "keycode $1 in group $2: expected '$3', got '${got:-nothing}'"; echo "PASS: keycode $1 in group $2 -> $3"; }
+
+# ru,us: Russian (group 1) uses the US key positions; US (group 2) works too.
+expect 52 0 "nop focus-child"   # KEY_Z
+expect 34 0 "nop bracket"       # KEY_LEFTBRACE
+expect 36 0 "nop return"
+expect 52 1 "nop focus-child"
+expect 34 1 "nop bracket"
+
+# Change to us,de: the watcher sees the new keymap and German follows its own
+# letters (z is on KEY_Y, keycode 29).
+setlayouts us,de
+for i in $(seq 50); do grep -q "Group2+Mod4+z" "$frag" 2>/dev/null && break; sleep 0.2; done
+grep -q "bindsym Group2+Mod4+z nop focus-child" "$frag" || { cat "$frag"; fail "fragment not updated for us,de"; }
+sleep 1
+expect 52 0 "nop focus-child"
+expect 29 1 "nop focus-child"
+
+pgrep -x i3-nagbar >/dev/null && fail "i3 reported a configuration error"
+echo "PASS: no configuration error"

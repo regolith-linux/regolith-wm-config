@@ -1,0 +1,94 @@
+#!/bin/sh
+# regolith-i3-layout-bindings: the generated fragment for a fixed i3 config and
+# a few sets of keyboard layouts (no X server or i3 needed).
+set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+export XDG_RUNTIME_DIR="$tmp"
+
+cat > "$tmp/config" <<'CFG'
+bindsym Mod4+z focus child
+bindsym Mod4+Shift+q kill
+bindsym Mod4+Return exec terminal
+bindsym Mod4+1 workspace number 1
+bindsym Mod4+minus gaps inner current minus 6
+bindsym Group2+Mod4+x nop user group binding
+bindsym --release Mod4+y nop on release
+bindsym button3 nop mouse
+mode "Resize Mode" {
+        bindsym z resize shrink width 6 px
+        bindsym Escape mode "default"
+}
+bar {
+        bindsym button4 nop bar
+        colors {
+                background #000000
+        }
+}
+bindsym \
+    Mod4+a focus parent
+CFG
+python3 - "$tmp/config" > "$tmp/reply.json" <<'PY'
+import json, sys
+text = open(sys.argv[1]).read()
+print(json.dumps({"config": text, "included_configs": [
+    {"path": sys.argv[1], "raw_contents": text, "variable_replaced_contents": text}]}))
+PY
+
+gen() { regolith-i3-layout-bindings --print --config-json "$tmp/reply.json" --layouts "$1"; }
+fail() { echo "FAIL: $*"; exit 1; }
+has() { grep -qxF -- "$2" "$1" || { cat "$1"; fail "missing: $2"; }; }
+hasnt() { ! grep -qF -- "$2" "$1" || { cat "$1"; fail "unexpected: $2"; }; }
+
+# One layout, or the same layout twice (GNOME adds the locale's layout as an
+# extra group): nothing to add.
+gen us > "$tmp/us"
+[ ! -s "$tmp/us" ] || { cat "$tmp/us"; fail "us: expected no output"; }
+gen us,us > "$tmp/usus"
+[ ! -s "$tmp/usus" ] || { cat "$tmp/usus"; fail "us,us: expected no output"; }
+echo "PASS: us and us,us need nothing"
+
+# US then German: z and minus move, so they get Group2 copies. Keys that are in
+# the same place (q, Return, 1) don't, nor does the US group GNOME appends.
+gen us,de,us > "$tmp/usde"
+has "$tmp/usde" "bindsym Group2+Mod4+z focus child"
+has "$tmp/usde" "bindsym Group2+Mod4+minus gaps inner current minus 6"
+has "$tmp/usde" "bindsym --release Group2+Mod4+y nop on release"
+has "$tmp/usde" '  bindsym Group2+z resize shrink width 6 px'
+has "$tmp/usde" 'mode "Resize Mode" {'
+hasnt "$tmp/usde" "Mod4+Shift+q"
+hasnt "$tmp/usde" "Return"
+hasnt "$tmp/usde" "Mod4+1 "
+hasnt "$tmp/usde" "Group3"
+hasnt "$tmp/usde" "button"
+hasnt "$tmp/usde" "nop bar"
+hasnt "$tmp/usde" "Group2+Group2"
+echo "PASS: us,de follows the German layout"
+
+# Russian first: Russian has no Latin letters, so its group gets the US key
+# codes (z = 52, a = 38, q = 24); the US groups get keysym copies.
+gen ru,us,us > "$tmp/ruus"
+has "$tmp/ruus" "bindcode Group1+Mod4+52 focus child"
+has "$tmp/ruus" "bindcode Group1+Mod4+38 focus parent"
+has "$tmp/ruus" "bindcode Group1+Mod4+Shift+24 kill"
+has "$tmp/ruus" "bindsym Group2+Mod4+z focus child"
+has "$tmp/ruus" "bindsym Group3+Mod4+z focus child"
+has "$tmp/ruus" '  bindcode Group1+52 resize shrink width 6 px'
+hasnt "$tmp/ruus" "Mod4+1 "
+hasnt "$tmp/ruus" "Return"
+echo "PASS: ru,us falls back to US key positions in Russian"
+
+# Russian second: its group gets the US key codes too.
+gen us,ru,us > "$tmp/usru"
+has "$tmp/usru" "bindcode Group2+Mod4+52 focus child"
+hasnt "$tmp/usru" "Group1"
+echo "PASS: us,ru"
+
+# The fragment is valid i3 configuration.
+if command -v i3 >/dev/null; then
+    for f in usde ruus usru; do
+        cat "$tmp/$f" "$tmp/config" > "$tmp/check-$f"
+        i3 -C -c "$tmp/check-$f" > "$tmp/check-$f.log" 2>&1 || { cat "$tmp/check-$f.log"; fail "i3 -C rejects $f"; }
+    done
+    echo "PASS: i3 -C accepts the fragments"
+fi
