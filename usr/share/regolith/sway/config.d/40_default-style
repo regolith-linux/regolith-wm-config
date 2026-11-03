@@ -1,8 +1,4 @@
-# Provide window class to float above tiled windows. class matches XWayland
-# windows only; native Wayland windows use the same name as their app_id
 floating_maximum_size -1 x -1
-for_window [class="floating_window"] floating enable
-for_window [app_id="floating_window"] floating enable
 
 # Set titlebar mode
 set_from_resource $wm.floatingwindow.border.style wm.floatingwindow.border.style pixel
@@ -12,9 +8,19 @@ set_from_resource $wm.window.border.style wm.window.border.style pixel
 set_from_resource $wm.window.border.size wm.window.border.size 1
 default_border $wm.window.border.style $wm.window.border.size
 
-# Work-around for bug in 4.21, remove when fixed
-# See https://github.com/i3/i3/issues/5149
-for_window [title=".*"] border pixel $wm.window.border.size
+# Apply the configured borders to every new window, including windows that ask
+# to draw their own decorations: tiled windows get wm.window.border.*,
+# floating windows wm.floatingwindow.border.*.
+for_window [tiling] border $wm.window.border.style $wm.window.border.size
+for_window [floating] border $wm.floatingwindow.border.style $wm.floatingwindow.border.size
+
+# Provide window class to float above tiled windows. class matches XWayland
+# windows only; native Wayland windows use the same name as their app_id.
+# sway matches every for_window rule before it runs any, so the [floating] rule
+# above can't see these windows float: give them the floating border here, after
+# the [tiling] rule has run.
+for_window [class="floating_window"] floating enable, border $wm.floatingwindow.border.style $wm.floatingwindow.border.size
+for_window [app_id="floating_window"] floating enable, border $wm.floatingwindow.border.style $wm.floatingwindow.border.size
 
 # Enable popup during fullscreen
 set_from_resource $wm.gaps.popup_during_fullscreen wm.gaps.popup_during_fullscreen smart
