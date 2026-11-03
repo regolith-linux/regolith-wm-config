@@ -338,6 +338,7 @@ Description: Configuration for providing functionality equivalent
 Package: regolith-sway-media-keys
 Architecture: any
 Depends: ${misc:Depends},
+  libgtk-3-bin,
   playerctl,
   regolith-avizo,
   regolith-wm-config

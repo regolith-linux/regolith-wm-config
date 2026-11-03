@@ -25,3 +25,18 @@ exec avizo-service
 
 # Start Playerctl service
 exec playerctld daemon
+
+# Launcher and lock keys, handled by gnome-settings-daemon in the X11 session:
+# the calculator, the default web browser and mail client, the home folder,
+# GNOME Settings and the lock screen (the session's idle manager locks on
+# loginctl's request). The Search key does nothing there (it opens the GNOME
+# Shell search), so it isn't bound here either.
+bindsym XF86Calculator exec gtk-launch org.gnome.Calculator
+bindsym XF86WWW exec gtk-launch $(xdg-settings get default-web-browser)
+bindsym XF86Mail exec gtk-launch $(xdg-settings get default-url-scheme-handler mailto)
+bindsym XF86Explorer exec xdg-open ~
+bindsym XF86Tools exec gtk-launch org.gnome.Settings
+# The lock key (keycode 160, XF86ScreenSaver) is bound by its code: sway looks
+# key names up without regard to case and takes "XF86ScreenSaver" for
+# XF86Screensaver, another key
+bindcode 160 exec loginctl lock-session
