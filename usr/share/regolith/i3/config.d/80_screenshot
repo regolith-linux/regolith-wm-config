@@ -1,0 +1,15 @@
+# Screenshot keys of the sway session (80_grimshot) that gnome-flashback's
+# Print keys don't cover: copy the focused window, save and copy a window or an
+# area, and save all screens. They use the same resources as in sway.
+
+## Session // Window Snapshot // <><Prtscr> ##
+set_from_resource $wm.binding.screenshot.window wm.binding.screenshot.window Print
+bindsym $mod+$wm.binding.screenshot.window exec --no-startup-id regolith-i3-screenshot copy active
+
+## Session // Screenshot Selection // <><Shift><Prtscr> ##
+set_from_resource $wm.binding.screenshot wm.binding.screenshot Shift+Print
+bindsym $mod+$wm.binding.screenshot exec --no-startup-id regolith-i3-screenshot --notify savecopy anything
+
+## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
+set_from_resource $wm.binding.screenshot.all wm.binding.screenshot.all Shift+Ctrl+Print
+bindsym $mod+$wm.binding.screenshot.all exec --no-startup-id regolith-i3-screenshot --notify save screen

@@ -1,0 +1,99 @@
+#!/bin/sh
+# Screenshot keys that the sway session has through grimshot and the X11
+# session's gnome-flashback keys lack, for i3 (80_screenshot):
+#
+#   regolith-i3-screenshot copy active                copy the focused window
+#   regolith-i3-screenshot --notify savecopy anything click a window or drag an
+#                                                     area; save it and copy it
+#   regolith-i3-screenshot --notify save screen       save all screens
+#
+# The pictures are taken by gnome-flashback's screenshot service, the one
+# behind the session's Print keys, so they get the same flash, folder (Pictures,
+# or the home folder) and file names. slop does the window-or-area selection
+# and xclip copies the saved file. With --notify, a notification names the
+# result, as grimshot --notify does.
+
+notify=no
+if [ "${1-}" = --notify ]; then
+  notify=yes
+  shift
+fi
+action=${1-}
+subject=${2-}
+
+say() { # title message [notify-send options]: report the result
+  if [ "$notify" = yes ]; then
+    title=$1 message=$2
+    shift 2
+    notify-send -t 3000 -a Screenshot "$@" "$title" "$message"
+  fi
+}
+
+fail() { # message
+  printf 'regolith-i3-screenshot: %s\n' "$1" >&2
+  if [ "$notify" = yes ]; then
+    notify-send -t 3000 -a Screenshot -u critical "Screenshot" "Error: $1"
+  fi
+  exit 2
+}
+
+# shot <method> <args>: call the screenshot service. For a file, print where
+# it was saved.
+shot() {
+  method=$1
+  shift
+  reply=$(gdbus call --session --dest org.gnome.Shell.Screenshot \
+    --object-path /org/gnome/Shell/Screenshot \
+    --method "org.gnome.Shell.Screenshot.$method" "$@" 2>&1) ||
+    fail "gnome-flashback's screenshot service failed: $reply"
+  # The reply is "(true, '<file>')"; the file name is escaped like a GVariant
+  # string
+  case $reply in
+    "(true, '"*"')") ;;
+    *) fail "the screenshot was not taken: $reply" ;;
+  esac
+  reply=${reply#"(true, '"}
+  printf '%s\n' "${reply%"')"}" | sed "s/\\\\\\(.\\)/\\1/g"
+}
+
+# The file name gnome-flashback gives a screenshot taken with Print, in the
+# session's language; the service adds ".png" and a number if it exists
+name() {
+  pattern=$(TEXTDOMAIN=gnome-flashback gettext "Screenshot from %s" 2> /dev/null)
+  case $pattern in
+    *%s*) ;;
+    *) pattern="Screenshot from %s" ;;
+  esac
+  # shellcheck disable=SC2059 # the pattern is the translated format
+  printf "$pattern" "$(date '+%Y-%m-%d %H-%M-%S')"
+}
+
+case "$action $subject" in
+  "copy active")
+    # include frame, no pointer, flash; no file name copies to the clipboard
+    shot ScreenshotWindow true false true "" > /dev/null || exit 2
+    say "Screenshot of active" "Window copied to clipboard"
+    ;;
+  "save screen")
+    file=$(shot Screenshot false true "$(name)") || exit 2
+    say "Screenshot of screen" "$(basename "$file")" -i "$file"
+    printf '%s\n' "$file"
+    ;;
+  "savecopy anything")
+    # A click picks the window under the pointer, a drag an area; Escape or a
+    # right click cancels
+    geometry=$(slop -f '%x %y %w %h') || exit 1
+    # shellcheck disable=SC2086 # four numbers
+    set -- $geometry
+    [ "$#" -eq 4 ] || fail "unexpected selection: $geometry"
+    file=$(shot ScreenshotArea "$1" "$2" "$3" "$4" true "$(name)") || exit 2
+    xclip -selection clipboard -t image/png -i "$file" ||
+      fail "could not copy $file to the clipboard"
+    say "Screenshot of anything" "$(basename "$file") and clipboard" -i "$file"
+    printf '%s\n' "$file"
+    ;;
+  *)
+    echo "Usage: regolith-i3-screenshot [--notify] (copy active | save screen | savecopy anything)" >&2
+    exit 64
+    ;;
+esac

@@ -94,7 +94,11 @@ Description: Regolith sway style
 Package: regolith-i3-session
 Architecture: any
 Depends: ${misc:Depends},
-  regolith-wm-config
+  libglib2.0-bin,
+  libnotify-bin,
+  regolith-wm-config,
+  slop,
+  xclip
 Description: Regolith Desktop i3 session keybindings
 
 Package: regolith-sway-session

@@ -8,4 +8,5 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	bash tests/check-set-swaybg.sh
 	bash tests/check-sway-gtklock.sh
 	bash tests/check-sway-screenshot-keys.sh
+	bash tests/check-i3-screenshot.sh
 endif
