@@ -1,0 +1,45 @@
+###############################################################################
+# Touchpad Gesture Bindings
+###############################################################################
+# The same swipes, Xresources and default actions as the sway session's
+# 61_touchpad_guestures. i3 has no bindgesture, so regolith-i3-touchpad-gestures
+# receives the swipes from the X server and runs the commands with i3-msg.
+# It is started with exec_always, so changed resources apply when i3 restarts
+# (i3 doesn't run exec_always on reload).
+
+# Three finger swipe right
+set_from_resource $wm.guesture.swipe.three_right wm.guesture.swipe.three_right workspace prev_on_output
+
+# Three finger swipe left
+set_from_resource $wm.guesture.swipe.three_left wm.guesture.swipe.three_left workspace next_on_output
+
+# Three finger swipe up
+set_from_resource $wm.guesture.swipe.three_up wm.guesture.swipe.three_up exec ilia -p windows -t $ilia.stylesheet
+
+# Three finger swipe down
+set_from_resource $wm.guesture.swipe.three_down wm.guesture.swipe.three_down exec ilia -p apps -t $ilia.stylesheet
+
+# Four finger swipe right
+set_from_resource $wm.guesture.swipe.four_right wm.guesture.swipe.four_right move workspace to output right
+
+# Four finger swipe left
+set_from_resource $wm.guesture.swipe.four_left wm.guesture.swipe.four_left move workspace to output left
+
+# Four finger swipe up
+set_from_resource $wm.guesture.swipe.four_up wm.guesture.swipe.four_up move workspace to output up
+
+# Four finger swipe down
+set_from_resource $wm.guesture.swipe.four_down wm.guesture.swipe.four_down move workspace to output down
+
+# i3 doesn't expand $ilia.stylesheet inside the defaults above, so the helper
+# does it.
+exec_always --no-startup-id regolith-i3-touchpad-gestures \
+    --variable 'ilia.stylesheet=$ilia.stylesheet' \
+    'swipe:3:right=$wm.guesture.swipe.three_right' \
+    'swipe:3:left=$wm.guesture.swipe.three_left' \
+    'swipe:3:up=$wm.guesture.swipe.three_up' \
+    'swipe:3:down=$wm.guesture.swipe.three_down' \
+    'swipe:4:right=$wm.guesture.swipe.four_right' \
+    'swipe:4:left=$wm.guesture.swipe.four_left' \
+    'swipe:4:up=$wm.guesture.swipe.four_up' \
+    'swipe:4:down=$wm.guesture.swipe.four_down'

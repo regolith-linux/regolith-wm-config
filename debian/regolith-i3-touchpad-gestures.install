@@ -1,0 +1,2 @@
+usr/share/regolith/i3/config.d/61_touchpad_gestures
+scripts/regolith-i3-touchpad-gestures usr/bin

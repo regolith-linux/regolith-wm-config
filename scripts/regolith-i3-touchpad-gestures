@@ -1,0 +1,272 @@
+#!/usr/bin/python3
+"""Touchpad swipe gestures for i3, like sway's bindgesture.
+
+    regolith-i3-touchpad-gestures [--variable NAME=VALUE]... \
+        'swipe:3:left=workspace next_on_output' ...
+
+Each swipe argument binds a swipe (fingers 3 or more; direction left, right, up or
+down) to an i3 command, as `bindgesture --exact swipe:<fingers>:<direction>`
+does in sway (61_touchpad_gestures). The direction is the axis the fingers
+moved furthest along, as in sway; cancelled swipes are ignored.
+
+--variable replaces $NAME in the commands with VALUE. sway expands variables
+inside a set_from_resource default (the swipe-up default uses
+$ilia.stylesheet), but i3 doesn't, so 61_touchpad_gestures passes the values
+this way.
+
+The swipes come from the X server (XInput 2.4 gesture events, sent by Xorg 21.1
+and later with the libinput touchpad driver), so no access to the input devices
+is needed. The helper holds a passive grab on swipes over the whole screen, as
+the window manager would, and runs the command with i3-msg.
+
+Only one instance runs per display: a new one (i3 runs this with exec_always,
+so on every reload) takes over from the previous one, which exits.
+"""
+
+import ctypes
+import signal
+import subprocess
+import sys
+import time
+
+PROG = "regolith-i3-touchpad-gestures"
+DIRECTIONS = ("left", "right", "up", "down")
+
+
+def log(message):
+    print(f"{PROG}: {message}", file=sys.stderr, flush=True)
+
+
+def parse_binding(arg):
+    """'swipe:3:left=workspace next' -> ((3, 'left'), 'workspace next')"""
+    gesture, sep, command = arg.partition("=")
+    parts = gesture.strip().split(":")
+    if (not sep or len(parts) != 3 or parts[0] != "swipe"
+            or not parts[1].isdigit() or int(parts[1]) < 3
+            or parts[2] not in DIRECTIONS):
+        raise ValueError(f"not a swipe binding: {arg!r} "
+                         "(expected swipe:<fingers>:<left|right|up|down>=<command>)")
+    return (int(parts[1]), parts[2]), command.strip()
+
+
+def parse_args(argv):
+    """-> (bindings {(fingers, direction): command}, variables {name: value})"""
+    bindings, variables = {}, {}
+    args = iter(argv)
+    for arg in args:
+        if arg == "--variable" or arg.startswith("--variable="):
+            value = arg.partition("=")[2] if "=" in arg else next(args, "")
+            name, sep, value = value.partition("=")
+            if not sep or not name:
+                raise ValueError(f"not a variable: {value!r} (expected NAME=VALUE)")
+            variables[name] = value
+        else:
+            gesture, command = parse_binding(arg)
+            bindings[gesture] = command
+    return bindings, variables
+
+
+def expand(command, variables):
+    """Replace $NAME with its value, longest names first (as i3 and sway do)."""
+    for name in sorted(variables, key=len, reverse=True):
+        command = command.replace("$" + name, variables[name])
+    return command
+
+
+def direction(dx, dy):
+    """The swipe's direction from the summed motion, as sway decides it."""
+    if dx == 0 and dy == 0:
+        return None
+    if abs(dx) > abs(dy):
+        return "right" if dx > 0 else "left"
+    return "down" if dy > 0 else "up"
+
+
+# Xlib and XInput 2 (libXi >= 1.8) -------------------------------------------
+
+Window = ctypes.c_ulong
+Atom = ctypes.c_ulong
+GenericEvent = 35
+SelectionClear = 29
+CurrentTime = 0
+GrabModeAsync = 1
+XIAllMasterDevices = 1
+XIAnyModifier = 1 << 31
+XI_GestureSwipeBegin, XI_GestureSwipeUpdate, XI_GestureSwipeEnd = 30, 31, 32
+XIGestureSwipeEventCancelled = 1
+
+
+class XGenericEventCookie(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+                ("extension", ctypes.c_int), ("evtype", ctypes.c_int),
+                ("cookie", ctypes.c_uint), ("data", ctypes.c_void_p)]
+
+
+class XEvent(ctypes.Union):
+    _fields_ = [("type", ctypes.c_int), ("xcookie", XGenericEventCookie),
+                ("pad", ctypes.c_long * 24)]
+
+
+class XIModifierState(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_int) for n in ("base", "latched", "locked", "effective")]
+
+
+class XIGestureSwipeEvent(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+                ("extension", ctypes.c_int), ("evtype", ctypes.c_int),
+                ("time", ctypes.c_ulong), ("deviceid", ctypes.c_int),
+                ("sourceid", ctypes.c_int), ("detail", ctypes.c_int),
+                ("root", Window), ("event", Window), ("child", Window),
+                ("root_x", ctypes.c_double), ("root_y", ctypes.c_double),
+                ("event_x", ctypes.c_double), ("event_y", ctypes.c_double),
+                ("delta_x", ctypes.c_double), ("delta_y", ctypes.c_double),
+                ("delta_unaccel_x", ctypes.c_double),
+                ("delta_unaccel_y", ctypes.c_double),
+                ("flags", ctypes.c_int), ("mods", XIModifierState),
+                ("group", XIModifierState)]
+
+
+class XIEventMask(ctypes.Structure):
+    _fields_ = [("deviceid", ctypes.c_int), ("mask_len", ctypes.c_int),
+                ("mask", ctypes.POINTER(ctypes.c_ubyte))]
+
+
+class XIGrabModifiers(ctypes.Structure):
+    _fields_ = [("modifiers", ctypes.c_int), ("status", ctypes.c_int)]
+
+
+def load_x():
+    x11 = ctypes.CDLL("libX11.so.6")
+    xi = ctypes.CDLL("libXi.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XDefaultRootWindow.restype = Window
+    x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x11.XDefaultScreen.argtypes = [ctypes.c_void_p]
+    x11.XQueryExtension.argtypes = [ctypes.c_void_p, ctypes.c_char_p] + [ctypes.POINTER(ctypes.c_int)] * 3
+    x11.XInternAtom.restype = Atom
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x11.XCreateSimpleWindow.restype = Window
+    x11.XCreateSimpleWindow.argtypes = [ctypes.c_void_p, Window] + [ctypes.c_int] * 2 + [ctypes.c_uint] * 2 + [ctypes.c_uint, ctypes.c_ulong, ctypes.c_ulong]
+    x11.XGetSelectionOwner.restype = Window
+    x11.XGetSelectionOwner.argtypes = [ctypes.c_void_p, Atom]
+    x11.XSetSelectionOwner.argtypes = [ctypes.c_void_p, Atom, Window, ctypes.c_ulong]
+    x11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.POINTER(XEvent)]
+    x11.XGetEventData.argtypes = [ctypes.c_void_p, ctypes.POINTER(XGenericEventCookie)]
+    x11.XFreeEventData.argtypes = [ctypes.c_void_p, ctypes.POINTER(XGenericEventCookie)]
+    x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    xi.XIQueryVersion.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+    xi.XIGrabSwipeGestureBegin.argtypes = [ctypes.c_void_p, ctypes.c_int, Window, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.POINTER(XIEventMask), ctypes.c_int, ctypes.POINTER(XIGrabModifiers)]
+    return x11, xi
+
+
+def take_over(x11, dpy, root):
+    """Own this display's manager selection; a running instance sees
+    SelectionClear and exits, which releases its grab."""
+    screen = x11.XDefaultScreen(dpy)
+    selection = x11.XInternAtom(dpy, f"_REGOLITH_I3_TOUCHPAD_GESTURES_S{screen}".encode(), False)
+    window = x11.XCreateSimpleWindow(dpy, root, -1, -1, 1, 1, 0, 0, 0)
+    previous = x11.XGetSelectionOwner(dpy, selection)
+    x11.XSetSelectionOwner(dpy, selection, window, CurrentTime)
+    x11.XSync(dpy, False)
+    if x11.XGetSelectionOwner(dpy, selection) != window:
+        log("could not take over from the running instance")
+        sys.exit(1)
+    return previous != 0
+
+
+def grab_swipes(x11, xi, dpy, root, wait):
+    bits = (ctypes.c_ubyte * 5)()
+    for ev in (XI_GestureSwipeBegin, XI_GestureSwipeUpdate, XI_GestureSwipeEnd):
+        bits[ev >> 3] |= 1 << (ev & 7)
+    mask = XIEventMask(XIAllMasterDevices, len(bits), bits)
+    deadline = time.monotonic() + (3 if wait else 0)
+    while True:
+        mods = XIGrabModifiers(XIAnyModifier, 0)
+        failed = xi.XIGrabSwipeGestureBegin(dpy, XIAllMasterDevices, root,
+                                            GrabModeAsync, GrabModeAsync, False,
+                                            ctypes.byref(mask), 1, ctypes.byref(mods))
+        x11.XSync(dpy, False)
+        if failed == 0:
+            return
+        if time.monotonic() >= deadline:
+            log("touchpad swipes are grabbed by another program")
+            sys.exit(1)
+        time.sleep(0.1)  # the previous instance is still exiting
+
+
+def run(command):
+    if not command:
+        return
+    try:
+        subprocess.Popen(["i3-msg", "-q", "--", command],
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as error:
+        log(f"cannot run i3-msg: {error}")
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    try:
+        bindings, variables = parse_args(argv)
+    except ValueError as error:
+        log(error)
+        return 2
+    bindings = {gesture: expand(command, variables) for gesture, command in bindings.items()}
+
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)  # don't keep i3-msg zombies
+    x11, xi = load_x()
+    dpy = x11.XOpenDisplay(None)
+    if not dpy:
+        log("cannot open the X display")
+        return 1
+    root = x11.XDefaultRootWindow(dpy)
+    opcode, first_event, first_error = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+    if not x11.XQueryExtension(dpy, b"XInputExtension", ctypes.byref(opcode),
+                               ctypes.byref(first_event), ctypes.byref(first_error)):
+        log("the X server has no XInput extension; no gestures")
+        return 0
+    major, minor = ctypes.c_int(2), ctypes.c_int(4)
+    if xi.XIQueryVersion(dpy, ctypes.byref(major), ctypes.byref(minor)) != 0 \
+            or (major.value, minor.value) < (2, 4):
+        log(f"the X server has XInput {major.value}.{minor.value}; "
+            "touchpad gestures need 2.4 (Xorg 21.1 or later)")
+        return 0
+
+    replaced = take_over(x11, dpy, root)
+    grab_swipes(x11, xi, dpy, root, wait=replaced)
+
+    event = XEvent()
+    fingers, dx, dy = 0, 0.0, 0.0
+    while True:
+        x11.XNextEvent(dpy, ctypes.byref(event))
+        if event.type == SelectionClear:
+            return 0  # a new instance took over
+        cookie = event.xcookie
+        if event.type != GenericEvent or cookie.extension != opcode.value:
+            continue
+        if not x11.XGetEventData(dpy, ctypes.byref(cookie)):
+            continue
+        try:
+            if cookie.evtype not in (XI_GestureSwipeBegin, XI_GestureSwipeUpdate,
+                                     XI_GestureSwipeEnd):
+                continue
+            swipe = ctypes.cast(cookie.data, ctypes.POINTER(XIGestureSwipeEvent)).contents
+            if cookie.evtype == XI_GestureSwipeBegin:
+                fingers, dx, dy = swipe.detail, 0.0, 0.0
+            dx += swipe.delta_x
+            dy += swipe.delta_y
+            if cookie.evtype == XI_GestureSwipeEnd \
+                    and not swipe.flags & XIGestureSwipeEventCancelled:
+                run(bindings.get((fingers, direction(dx, dy))))
+        finally:
+            x11.XFreeEventData(dpy, ctypes.byref(cookie))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
