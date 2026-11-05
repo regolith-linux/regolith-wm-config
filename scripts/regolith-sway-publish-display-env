@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Publish compositor env to systemd, D-Bus activation, and gnome-session,
+# then signal that the compositor is ready.
+#
+# gnome-session Setenv is only accepted during Initialization, which ends
+# when this unit reports READY. Sway exec is asynchronous, so Setenv and
+# notify must run in one process.
+
+set -euo pipefail
+
+VARS=(XDG_CURRENT_DESKTOP DISPLAY WAYLAND_DISPLAY SWAYSOCK I3SOCK)
+
+systemctl --user import-environment "${VARS[@]}"
+
+if hash dbus-update-activation-environment 2>/dev/null; then
+  dbus-update-activation-environment --systemd "${VARS[@]}"
+fi
+
+publish_to_gnome_session() {
+  local name=$1 value=${2-}
+  [[ -n $value ]] || return 0
+  gdbus call --session \
+    --dest org.gnome.SessionManager \
+    --object-path /org/gnome/SessionManager \
+    --method org.gnome.SessionManager.Setenv "$name" "$value" \
+    >/dev/null 2>&1 || true
+}
+
+publish_to_gnome_session WAYLAND_DISPLAY "${WAYLAND_DISPLAY-}"
+publish_to_gnome_session DISPLAY "${DISPLAY-}"
+
+if [[ -z ${NOTIFY_SOCKET-} ]]; then
+  systemctl --user start regolith-wayland.target
+else
+  systemd-notify --ready
+fi
