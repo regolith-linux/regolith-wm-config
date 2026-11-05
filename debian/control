@@ -6,6 +6,7 @@ Build-Depends: debhelper (>= 11),
   file <!nocheck>,
   jq <!nocheck>,
   libxml2-utils <!nocheck>,
+  procps <!nocheck>,
   python3 <!nocheck>
 Standards-Version: 4.1.3
 Homepage: https://github.com/regolith-linux/regolith-wm-config
@@ -296,7 +297,9 @@ Description: nm-applet integration with wm
 Package: regolith-wm-base-launchers
 Architecture: any
 Depends: ${misc:Depends},
+  jq,
   libgtk-3-bin,
+  procps,
   regolith-wm-config
 Description: Terminal and Browser launcher config
  Adds keybindings for terminal and browser.

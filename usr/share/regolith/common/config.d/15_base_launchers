@@ -5,7 +5,10 @@
 ## Launch // Terminal // <> Enter ##
 set_from_resource $wm.binding.terminal wm.binding.terminal Return
 set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/x-terminal-emulator
-bindsym $mod+$wm.binding.terminal exec --no-startup-id systemd-run --user --scope $wm.program.terminal
+# home: open new terminals in the home directory. focused: open them in the
+# working directory of the focused terminal (or home, if no terminal is focused).
+set_from_resource $wm.terminal.cwd wm.terminal.cwd home
+bindsym $mod+$wm.binding.terminal exec --no-startup-id regolith-terminal-cwd $wm.terminal.cwd systemd-run --user --scope $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
 set_from_resource $wm.binding.browser wm.binding.browser Shift+Return
