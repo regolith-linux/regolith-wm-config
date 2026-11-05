@@ -30,8 +30,9 @@ exec playerctld daemon
 # the calculator, the default web browser and mail client, the home folder,
 # GNOME Settings and the lock screen (the session's idle manager locks on
 # loginctl's request). The Search key does nothing there (it opens the GNOME
-# Shell search), so it isn't bound here either.
-bindsym XF86Calculator exec gtk-launch org.gnome.Calculator
+# Shell search), so it isn't bound here either. Like gnome-settings-daemon,
+# the Calculator key also tries the desktop id of the gnome-calculator snap.
+bindsym XF86Calculator exec gtk-launch org.gnome.Calculator || gtk-launch gnome-calculator_gnome-calculator
 bindsym XF86WWW exec gtk-launch $(xdg-settings get default-web-browser)
 bindsym XF86Mail exec gtk-launch $(xdg-settings get default-url-scheme-handler mailto)
 bindsym XF86Explorer exec xdg-open ~
