@@ -1,0 +1,98 @@
+#!/bin/sh
+# Run a command (the terminal) in the working directory of the focused
+# terminal's shell, for the terminal key in i3 and sway (15_base_launchers):
+#
+#   regolith-terminal-cwd focused COMMAND...  start COMMAND in the focused
+#                                             terminal's directory
+#   regolith-terminal-cwd home COMMAND...     start COMMAND as before (in the
+#                                             session's directory, $HOME)
+#
+# The focused window comes from i3 or sway. Its shell is a child process of
+# the window's process whose program is listed in /etc/shells. A terminal that
+# runs several shells in one process (gnome-terminal) is disambiguated by the
+# window title, which Debian's and Ubuntu's default bash prompt sets to
+# "user@host: <directory>". When there is no focused terminal, or its shell
+# can't be told apart, COMMAND starts in $HOME as before.
+#
+# With no "focused" or "home" first argument, COMMAND runs unchanged.
+
+case "${1-}" in
+  focused) mode=focused; shift ;;
+  home) mode=home; shift ;;
+  *) mode=home ;;
+esac
+[ $# -gt 0 ] || { echo "usage: regolith-terminal-cwd focused|home COMMAND..." >&2; exit 2; }
+
+# focused_window: print "<pid> <title>" of the focused window, or nothing
+focused_window() {
+  if [ -n "${SWAYSOCK-}" ]; then
+    swaymsg -t get_tree 2>/dev/null |
+      jq -r 'first(.. | objects | select(.focused == true and .pid != null)) | "\(.pid) \(.name // "")"' 2>/dev/null
+  else
+    node=$(i3-msg -t get_tree 2>/dev/null |
+      jq -r 'first(.. | objects | select(.focused == true and .window != null)) | "\(.window) \(.name // "")"' 2>/dev/null)
+    [ -n "$node" ] || return 0
+    pid=$(xdotool getwindowpid "${node%% *}" 2>/dev/null) || return 0
+    [ -n "$pid" ] && printf '%s %s\n' "$pid" "${node#* }"
+  fi
+}
+
+# is_shell <pid>: the process runs a program listed in /etc/shells
+is_shell() {
+  exe=$(readlink -f "/proc/$1/exe" 2>/dev/null) || return 1
+  [ -n "$exe" ] || return 1
+  while read -r shell; do
+    case "$shell" in /*) ;; *) continue ;; esac
+    [ "$(readlink -f "$shell" 2>/dev/null)" = "$exe" ] && return 0
+  done < /etc/shells
+  return 1
+}
+
+# title_shows <title> <dir>: the title ends with the directory, as the default
+# prompt shows it (with ~ for the home directory)
+title_shows() {
+  title=$1 dir=$2
+  case "$dir" in
+    "$HOME") shown="~" ;;
+    "$HOME"/*) shown="~${dir#"$HOME"}" ;;
+    *) shown=$dir ;;
+  esac
+  case "$title" in
+    "$shown" | "$dir" | *" $shown" | *" $dir" | *":$shown" | *":$dir") return 0 ;;
+  esac
+  return 1
+}
+
+# focused_cwd: print the focused terminal shell's directory, or nothing
+focused_cwd() {
+  window=$(focused_window)
+  [ -n "$window" ] || return 0
+  pid=${window%% *} title=${window#* }
+  [ "$title" = "$window" ] && title=
+  case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+  dirs=
+  for child in $(pgrep -P "$pid"); do
+    is_shell "$child" || continue
+    dir=$(readlink "/proc/$child/cwd" 2>/dev/null) || continue
+    [ -d "$dir" ] && dirs="$dirs$dir
+"
+  done
+  unique=$(printf '%s' "$dirs" | sort -u)
+  [ -n "$unique" ] || return 0
+  if [ "$(printf '%s\n' "$unique" | wc -l)" -eq 1 ]; then
+    printf '%s\n' "$unique"
+    return 0
+  fi
+  # several shells in different directories: the one the title names
+  matches=$(printf '%s\n' "$unique" | while IFS= read -r dir; do
+    title_shows "$title" "$dir" && printf '%s\n' "$dir"
+  done)
+  [ -n "$matches" ] && [ "$(printf '%s\n' "$matches" | wc -l)" -eq 1 ] && printf '%s\n' "$matches"
+  return 0
+}
+
+if [ "$mode" = focused ]; then
+  dir=$(focused_cwd)
+  [ -n "$dir" ] && cd "$dir" 2>/dev/null || cd "$HOME" 2>/dev/null || :
+fi
+exec "$@"

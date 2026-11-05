@@ -1,1 +1,2 @@
 usr/share/regolith/common/config.d/15_base_launchers
+scripts/regolith-terminal-cwd usr/bin
