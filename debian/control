@@ -51,6 +51,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-i3xrocks,
   regolith-i3-ilia,
   regolith-i3-next-workspace,
+  regolith-wm-screen-recording,
   regolith-i3-session,
   regolith-i3-touchpad-gestures,
   regolith-i3-workspace-memory,
@@ -82,7 +83,8 @@ Recommends: regolith-sway-background,
   regolith-sway-screensharing,
   regolith-sway-session,
   regolith-sway-touchpad-gestures,
-  regolith-sway-unclutter
+  regolith-sway-unclutter,
+  regolith-wm-screen-recording
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
 
@@ -123,6 +125,22 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
 Description: Regolith Desktop resize keybindings
+
+Package: regolith-wm-screen-recording
+Architecture: any
+Depends: ${misc:Depends},
+  ffmpeg,
+  jq,
+  libnotify-bin,
+  pulseaudio-utils,
+  regolith-wm-config,
+  slop,
+  slurp,
+  wf-recorder
+Description: Regolith Desktop screen recording keybindings
+ Keys that start and stop a recording of the focused output, a selected
+ region or the focused window, with desktop sound, in the i3 and sway
+ sessions. Recordings are saved to the Videos folder.
 
 Package: regolith-wm-user-programs
 Architecture: any
