@@ -1,3 +1,43 @@
+regolith-wm-config (4.12.0) jammy; urgency=medium
+
+  [ rego-port-bot ]
+  * fix: stop hard-coding Mod1 so the wm.mod/wm.alt swap works
+  * fix(sway): allow switching keyboard layout on the lock screen
+  * fix(sway): give the previous-layout binding its own resources
+  * docs(i3): list the layout-switch keys in the keybinding viewer
+  * fix(sway): keep the user's input method choice across reloads
+  * docs(i3): list the screenshot keys in the keybinding viewer
+  * fix(sway): make Terminate App work for native Wayland windows
+  * fix(debian): install the i3 next-free-workspace bindings again
+  * fix(debian): bring back regolith-sway-audio-idle-inhibit as a transitional package
+  * fix(sway): keep the brightness keys working on the lock screen
+  * fix(sway): serve the GNOME theme, fonts and cursor to XWayland apps
+  * fix(clamshell): take the lid close action from systemd-logind, as X11 does
+  * feat(sway): use the X11 session's screenshot keys
+  * feat(sway): let users opt out of the XWayland settings service
+  * fix(sway): reload kanshi on sway reloads instead of restarting it
+  * feat: add a key to switch back to the previous workspace
+  * feat: let Xresources change what the mouse wheel does over the bar
+  * fix(sway): read wm.hide_cursor.timeout, keeping the old timout spelling
+  * fix(sway): draw the wallpaper colours and gradients as the X11 session does
+  * fix(sway): float native Wayland windows with the app_id floating_window
+  * fix(sway): draw SVG wallpapers instead of taking them for GNOME XML files
+  * fix: make Up and Down resize the same way as k and j
+  * fix: open the Look Selector with the look's ilia stylesheet
+  * fix(i3): stop the old compositor when another compositor package replaces it
+  * fix(sway): lock the session when the lock-screen wallpaper path has spaces or ~
+  * fix(sway): apply wm.bar.trayoutput to the bar tray
+  * fix(sway): make Super+= and Super+Shift+= widen the gaps as in i3
+  * fix(sway): load the config when a look lacks child-border colours or ilia.stylesheet
+  * fix: apply the configured border styles to tiled and floating windows
+  * fix(sway): don't show the config error bar for Alt+Print when wm.mod is Mod1
+  * fix(sway): add the fine volume step and the media key variants of X11
+  * fix(sway): handle the launcher and lock keys as the X11 session does
+  * feat(i3): add sway's three Super+Print screenshot keys to the X11 session
+  * fix(sway): also open the calculator when it is installed as a snap
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 07 Nov 2026 09:18:56 -0800
+
 regolith-wm-config (4.11.12) jammy; urgency=medium
 
   [ Carlos Fernandez Sanz ]
