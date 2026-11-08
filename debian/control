@@ -142,7 +142,8 @@ Package: regolith-i3-unclutter
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  regolith-unclutter-xfixes
+  unclutter-xfixes (>= 1.5)
+Conflicts: unclutter-startup
 Description: Hide the mouse cursor if not used
  Launches unclutter upon start to hide mouse when not in use.
 
@@ -404,6 +405,17 @@ Description: transitional package for sway-audio-idle-inhibit
  config partial. The sway-audio-idle-inhibit package now starts it as a
  systemd user service, so this package is empty. It lets plain upgrades drop
  the old partial without removing anything, and can be safely removed.
+
+Package: regolith-unclutter-xfixes
+Architecture: all
+Section: oldlibs
+Depends: ${misc:Depends},
+  unclutter-xfixes (>= 1.5)
+Description: transitional package for unclutter-xfixes
+ Earlier versions of this package were Regolith's own build of
+ unclutter-xfixes. regolith-i3-unclutter now uses the distribution's
+ unclutter-xfixes, so this package is empty. It lets upgrades replace the
+ old build without removing any package, and can be safely removed.
 
 Package: regolith-sway-unclutter
 Architecture: any
