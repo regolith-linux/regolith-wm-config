@@ -39,6 +39,15 @@ bindcode --locked Ctrl+172 exec playerctl play-pause
 bindcode --locked Ctrl+208 exec playerctl play
 bindsym --locked Ctrl+XF86AudioNext exec playerctl next
 bindsym --locked Ctrl+XF86AudioPrev exec playerctl previous
+# The other player keys gnome-settings-daemon handles in the X11 session:
+# Rewind and Forward seek 10 s back and 45 s ahead, Repeat switches between
+# repeating the playlist and not repeating, and Shuffle toggles shuffle. The
+# Media key opens the default audio player.
+bindsym --locked XF86AudioRewind exec playerctl position 10-
+bindsym --locked XF86AudioForward exec playerctl position 45+
+bindsym --locked XF86AudioRepeat exec [ "$(playerctl loop)" = Playlist ] && playerctl loop None || playerctl loop Playlist
+bindsym --locked XF86AudioRandomPlay exec playerctl shuffle Toggle
+bindsym XF86AudioMedia exec gtk-launch $(xdg-mime query default audio/x-vorbis+ogg)
 
 # Start avizo for overlays
 exec avizo-service
