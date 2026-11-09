@@ -14,6 +14,12 @@
 # unset or the file doesn't exist, gtklock still starts, just without the
 # image: a wallpaper setting must never keep the session from locking.
 #
+# A look can style the lock screen with a gtklock stylesheet, named by the
+# gtklock.stylesheet resource (as ilia.stylesheet styles the launcher), for
+# example to keep the clock readable over its wallpaper. It is not used when
+# the user has a gtklock stylesheet of their own (gtklock's style.css, or a
+# style set in its config.ini).
+#
 # Arguments are passed on to gtklock (for example -d, to return once the
 # session is locked).
 
@@ -22,6 +28,21 @@ wallpaper=$(trawlcat regolith.lockscreen.wallpaper.file "" 2> /dev/null)
 case $wallpaper in
   "~/"*) wallpaper=$HOME/${wallpaper#"~/"} ;;
 esac
+
+gtklock_config=${XDG_CONFIG_HOME:-$HOME/.config}/gtklock
+stylesheet=$(trawlcat gtklock.stylesheet "" 2> /dev/null)
+if [ -n "$stylesheet" ]; then
+  if [ -f "$gtklock_config/style.css" ] ||
+     grep -qs '^[[:space:]]*style[[:space:]]*=' "$gtklock_config/config.ini"; then
+    stylesheet=
+  elif [ ! -f "$stylesheet" ]; then
+    echo "regolith-sway-gtklock: gtklock.stylesheet: no such file: '$stylesheet'" >&2
+    stylesheet=
+  fi
+fi
+if [ -n "$stylesheet" ]; then
+  set -- "$@" --style "$stylesheet"
+fi
 
 if [ -n "$wallpaper" ] && [ -f "$wallpaper" ]; then
   exec gtklock "$@" --background "$wallpaper"
