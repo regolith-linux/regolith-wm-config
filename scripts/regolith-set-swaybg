@@ -12,6 +12,13 @@
 #
 # When neither the file nor the primary colour has a value, the background is
 # left alone, as in X11.
+#
+# A wallpaper chosen in Settings > Background can be a pair of pictures, one
+# for the Default style and one for Dark (picture-uri and picture-uri-dark of
+# org.gnome.desktop.background); X11 shows the one for the current style.
+# When regolith.wallpaper.file is one picture of that pair, the one for the
+# current style is drawn. With --follow-style, the script keeps running and
+# draws the background again whenever the style changes.
 
 set -uo pipefail
 
@@ -76,6 +83,42 @@ to_hex() {
       if (tolower(n) == want) { printf "#%02x%02x%02x\n", $1, $2, $3; found = 1; exit }
     }
     END { exit !found }' "$RGB_TXT"
+}
+
+# background_path <key>: print the file of org.gnome.desktop.background's
+# <key> (a file:// URI), or nothing
+background_path() {
+  local uri
+  uri=$(gsettings get org.gnome.desktop.background "$1" 2> /dev/null) || return 0
+  python3 -c '
+import ast, sys, urllib.parse
+try:
+    uri = ast.literal_eval(sys.argv[1])
+except (ValueError, SyntaxError):
+    sys.exit()
+if isinstance(uri, str) and uri.startswith("file://"):
+    print(urllib.parse.unquote(urllib.parse.urlsplit(uri).path))
+' "$uri"
+}
+
+# style_wallpaper <file>: print the picture to draw for the wallpaper file:
+# the one for the current style when the file is one picture of the Default
+# and Dark pair set in GNOME, the file itself otherwise
+style_wallpaper() {
+  local light dark
+  light=$(background_path picture-uri)
+  dark=$(background_path picture-uri-dark)
+  if [[ -z $light || -z $dark || $light == "$dark" ]] ||
+     [[ $1 != "$light" && $1 != "$dark" ]]; then
+    printf '%s
+' "$1"
+  elif [[ $(gsettings get org.gnome.desktop.interface color-scheme 2> /dev/null) == "'prefer-dark'" ]]; then
+    printf '%s
+' "$dark"
+  else
+    printf '%s
+' "$light"
+  fi
 }
 
 # gradient <file> <width> <height> <vertical|horizontal> <#rrggbb> <#rrggbb>:
@@ -150,6 +193,15 @@ draw_gradient() {
   done
 }
 
+if [[ ${1-} == --follow-style ]]; then
+  # Draw the background again on each change of the Default/Dark style
+  gsettings monitor org.gnome.desktop.interface color-scheme |
+    while read -r _; do
+      "${BASH_SOURCE[0]}"
+    done
+  exit 0
+fi
+
 wallpaper=$(resource regolith.wallpaper.file)
 options=$(resource regolith.wallpaper.options)
 mode=$(resource regolith.wallpaper.mode)
@@ -181,6 +233,7 @@ fi
 
 if [[ -n $wallpaper ]]; then
   wallpaper=${wallpaper/#\~/$HOME}
+  wallpaper=$(style_wallpaper "$wallpaper")
   if [[ ! -f $wallpaper ]]; then
     warn "regolith.wallpaper.file: no such file: '$wallpaper'"
     wallpaper=

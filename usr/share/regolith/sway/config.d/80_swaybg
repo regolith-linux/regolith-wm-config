@@ -1,1 +1,4 @@
 exec_always --no-startup-id /usr/bin/regolith-set-swaybg
+# Draw the other picture of a Default/Dark wallpaper pair when the style
+# changes, as X11 does
+exec --no-startup-id /usr/bin/regolith-set-swaybg --follow-style
