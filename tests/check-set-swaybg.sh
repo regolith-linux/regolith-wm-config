@@ -30,7 +30,22 @@ else
     echo '[ { "success": true } ]'
 fi
 EOF
-chmod +x "$WORK/bin/trawlcat" "$WORK/bin/swaymsg"
+# gsettings get <schema> <key>: print the value from $STUB_GSETTINGS (lines
+# "<schema> <key> <value>"); gsettings monitor: report two changes
+cat > "$WORK/bin/gsettings" <<'EOF'
+#!/bin/sh
+case $1 in
+get)
+    value=$(sed -n "s/^$2 $3 //p" "$STUB_GSETTINGS" | tail -n 1)
+    [ -n "$value" ] || exit 1
+    printf '%s\n' "$value" ;;
+monitor)
+    printf "%s: 'prefer-dark'\n%s: 'default'\n" "$3" "$3" ;;
+*)
+    exit 1 ;;
+esac
+EOF
+chmod +x "$WORK/bin/trawlcat" "$WORK/bin/swaymsg" "$WORK/bin/gsettings"
 
 # A few lines in the format of /usr/share/X11/rgb.txt
 cat > "$WORK/rgb.txt" <<'EOF'
@@ -47,13 +62,17 @@ TWO_OUTPUTS='[{"name":"Virtual-1","active":true,"scale":1.0,"rect":{"x":0,"y":0,
  {"name":"DP-1","active":false,"scale":1.0,"rect":{"x":0,"y":0,"width":0,"height":0},"current_mode":{"width":0,"height":0}}]'
 
 export STUB_RESOURCES=$WORK/resources STUB_LOG=$WORK/log STUB_OUTPUTS=$ONE_OUTPUT
+export STUB_GSETTINGS=$WORK/gsettings
+: > "$STUB_GSETTINGS"
 export REGOLITH_SWAYBG_RGB_TXT=$WORK/rgb.txt XDG_RUNTIME_DIR=$WORK/run HOME=$WORK
 
-# run <resources...>: run the script with these resources
+# run <resources...>: run the script with these resources (and the arguments
+# in SCRIPT_ARGS)
+SCRIPT_ARGS=()
 run() {
     printf '%s\n' "$@" > "$STUB_RESOURCES"
     : > "$STUB_LOG"
-    PATH="$WORK/bin:$PATH" bash "$SCRIPT" > /dev/null 2> "$WORK/err" || echo "exit status $?" >> "$WORK/err"
+    PATH="$WORK/bin:$PATH" bash "$SCRIPT" "${SCRIPT_ARGS[@]}" > /dev/null 2> "$WORK/err" || echo "exit status $?" >> "$WORK/err"
 }
 
 # expect <description> <line>: the script sent this command
@@ -283,5 +302,45 @@ expect 'gradient without secondary colour' 'output * background #ff0000 solid_co
 run "regolith.wallpaper.file: $WORK/wall.png" 'regolith.wallpaper.color.primary: red' \
     'regolith.wallpaper.color.secondary: #0000ff' 'regolith.wallpaper.color.shading.type: vertical'
 expect 'image wins over gradient' "output * background $WORK/wall.png fill #ff0000"
+
+# A Default/Dark pair chosen in Settings: the picture for the current style
+cp "$WORK/wall.png" "$WORK/light.png"
+cp "$WORK/wall.png" "$WORK/dark wall.png"
+pair() { # pair <color-scheme>: the pair, and that style
+    printf '%s\n' "org.gnome.desktop.background picture-uri 'file://$WORK/light.png'" \
+        "org.gnome.desktop.background picture-uri-dark 'file://$WORK/dark%20wall.png'" \
+        "org.gnome.desktop.interface color-scheme '$1'" > "$STUB_GSETTINGS"
+}
+pair default
+run "regolith.wallpaper.file: $WORK/light.png"
+expect 'pair, Default style: light picture' "output * background $WORK/light.png fill #000000"
+run "regolith.wallpaper.file: $WORK/dark wall.png"
+expect 'pair, dark picture set, Default style: light picture' "output * background $WORK/light.png fill #000000"
+pair prefer-dark
+run "regolith.wallpaper.file: $WORK/light.png"
+expect 'pair, Dark style: dark picture' "output * background $WORK/dark wall.png fill #000000"
+run 'regolith.wallpaper.file: ~/light.png'
+expect 'pair, path under ~, Dark style: dark picture' "output * background $WORK/dark wall.png fill #000000"
+run "regolith.wallpaper.file: $WORK/wall.png"
+expect 'not a picture of the pair: drawn as it is' "output * background $WORK/wall.png fill #000000"
+# The same picture for both styles, as a look sets it: drawn as it is
+printf '%s\n' "org.gnome.desktop.background picture-uri 'file://$WORK/wall.png'" \
+    "org.gnome.desktop.background picture-uri-dark 'file://$WORK/wall.png'" \
+    "org.gnome.desktop.interface color-scheme 'prefer-dark'" > "$STUB_GSETTINGS"
+run "regolith.wallpaper.file: $WORK/wall.png"
+expect 'same picture for both styles' "output * background $WORK/wall.png fill #000000"
+# --follow-style draws the background again on each style change
+pair prefer-dark
+SCRIPT_ARGS=(--follow-style)
+run "regolith.wallpaper.file: $WORK/light.png"
+SCRIPT_ARGS=()
+if [ "$(grep -cxF "output * background $WORK/dark wall.png fill #000000" "$STUB_LOG")" = 2 ]; then
+    echo "ok   --follow-style: drawn on each change"
+else
+    echo "FAIL --follow-style: drawn on each change:" >&2
+    sed 's/^/       /' "$STUB_LOG" >&2
+    status=1
+fi
+: > "$STUB_GSETTINGS"
 
 exit $status

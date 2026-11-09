@@ -376,6 +376,7 @@ Package: regolith-sway-background
 Architecture: any
 Depends: ${misc:Depends},
     libxml2-utils,
+    libglib2.0-bin,
     file,
     jq,
     python3,
