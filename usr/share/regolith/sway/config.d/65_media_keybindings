@@ -26,6 +26,16 @@ set_from_resource $wm.media.brightness.step wm.media.brightness.step 5
 bindsym --locked XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
 bindsym --locked XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
 
+# Eject, battery and airplane mode keys, handled by gnome-settings-daemon in
+# the X11 session: eject a removable drive (on the lock screen too), show the
+# battery level, and turn airplane mode or Bluetooth airplane mode on or off
+bindsym --locked XF86Eject exec regolith-sway-gsd-keys eject
+bindsym XF86Battery exec regolith-sway-gsd-keys battery
+bindsym XF86WLAN exec regolith-sway-gsd-keys rfkill
+bindsym XF86UWB exec regolith-sway-gsd-keys rfkill
+bindsym XF86RFKill exec regolith-sway-gsd-keys rfkill
+bindsym XF86Bluetooth exec regolith-sway-gsd-keys bluetooth
+
 # Player Controls
 # The keycodes 172 and 208 are both bound to XF86AudioPlay but have different meanings
 bindcode --locked 172 exec playerctl play-pause

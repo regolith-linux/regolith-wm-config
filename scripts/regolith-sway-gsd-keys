@@ -1,0 +1,189 @@
+#!/usr/bin/python3
+"""Keys that gnome-settings-daemon handles in the X11 session, for sway.
+
+    regolith-sway-gsd-keys eject|battery|rfkill|bluetooth
+
+eject      Eject a removable drive, picked as gnome-settings-daemon picks it:
+           the first ejectable removable drive with media in it, else the
+           first one without.
+battery    Show the battery level of UPower's display device, when it is a
+           battery or a UPS.
+rfkill     Turn airplane mode on or off, through gnome-settings-daemon's
+           rfkill plugin (org.gnome.SettingsDaemon.Rfkill), which the sway
+           session runs as the X11 session does. Nothing changes while the
+           hardware switch holds airplane mode.
+bluetooth  The same for Bluetooth airplane mode.
+
+Where the X11 session shows an on-screen display, a short notification shows
+the same icon and text. 65_media_keybindings binds the keys to this helper.
+"""
+
+import os
+import sys
+import time
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+PROG = "regolith-sway-gsd-keys"
+RFKILL = ("org.gnome.SettingsDaemon.Rfkill", "/org/gnome/SettingsDaemon/Rfkill",
+          "org.gnome.SettingsDaemon.Rfkill")
+UPOWER_DISPLAY_DEVICE = ("org.freedesktop.UPower",
+                         "/org/freedesktop/UPower/devices/DisplayDevice",
+                         "org.freedesktop.UPower.Device")
+UP_DEVICE_KIND_BATTERY, UP_DEVICE_KIND_UPS = 2, 3
+# Some keyboards send one press of the airplane mode key through several
+# drivers; like gnome-settings-daemon, act on the first within a second.
+RFKILL_DEBOUNCE = 1.0
+
+
+def log(message):
+    print(f"{PROG}: {message}", file=sys.stderr, flush=True)
+
+
+def notify(icon, summary, body="", value=None):
+    """Show a short, transient notification, the sway stand-in for gsd's OSD."""
+    hints = {"transient": GLib.Variant("b", True)}
+    if value is not None:
+        hints["value"] = GLib.Variant("i", max(0, min(100, round(value))))
+    try:
+        Gio.bus_get_sync(Gio.BusType.SESSION, None).call_sync(
+            "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications", "Notify",
+            GLib.Variant("(susssasa{sv}i)",
+                         (PROG, 0, icon, summary, body, [], hints, 2000)),
+            None, Gio.DBusCallFlags.NONE, -1, None)
+    except GLib.Error as error:
+        log(f"cannot show a notification: {error.message}")
+
+
+def proxy(bus_type, name, path, interface):
+    return Gio.DBusProxy.new_for_bus_sync(
+        bus_type, Gio.DBusProxyFlags.NONE, None, name, path, interface, None)
+
+
+def eject():
+    best, has_media = None, False
+    for drive in Gio.VolumeMonitor.get().get_connected_drives():
+        if not drive.can_eject() or not drive.is_media_removable():
+            continue
+        if best is None:
+            best = drive
+        if drive.has_media():
+            best, has_media = drive, True
+            break
+    notify("media-eject-symbolic", "Eject", best.get_name() if best else "")
+    if best is None:
+        return 0
+
+    loop = GLib.MainLoop()
+    result = [0]
+
+    def done(drive, res):
+        try:
+            drive.eject_with_operation_finish(res)
+        except GLib.Error as error:
+            log(f"cannot eject {drive.get_name()}: {error.message}")
+            result[0] = 1
+        loop.quit()
+
+    best.eject_with_operation(Gio.MountUnmountFlags.FORCE, None, None, done)
+    loop.run()
+    return result[0]
+
+
+def battery():
+    try:
+        device = proxy(Gio.BusType.SYSTEM, *UPOWER_DISPLAY_DEVICE)
+    except GLib.Error as error:
+        log(f"cannot reach UPower: {error.message}")
+        return 1
+
+    def prop(name, default):
+        value = device.get_cached_property(name)
+        return value.unpack() if value is not None else default
+
+    if prop("Type", 0) not in (UP_DEVICE_KIND_BATTERY, UP_DEVICE_KIND_UPS):
+        return 0
+    percentage = prop("Percentage", 0.0)
+    notify(prop("IconName", "") or "battery-symbolic", "Battery",
+           f"{percentage:.0f}%", percentage)
+    return 0
+
+
+def debounced(name):
+    """True when the key was already handled less than a second ago."""
+    stamp = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
+                         f"{PROG}-{name}")
+    now = time.clock_gettime(time.CLOCK_MONOTONIC)
+    try:
+        with open(stamp) as f:
+            if 0 <= now - float(f.read()) < RFKILL_DEBOUNCE:
+                return True
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(stamp, "w") as f:
+            f.write(f"{now}\n")
+    except OSError:
+        pass
+    return False
+
+
+def rfkill(bluetooth):
+    if debounced("bluetooth" if bluetooth else "rfkill"):
+        return 0
+    prefix = "Bluetooth" if bluetooth else ""
+    try:
+        plugin = proxy(Gio.BusType.SESSION, *RFKILL)
+    except GLib.Error as error:
+        log(f"cannot reach the rfkill plugin: {error.message}")
+        return 1
+
+    def prop(name):
+        value = plugin.get_cached_property(prefix + name)
+        return bool(value is not None and value.unpack())
+
+    if not prop("HasAirplaneMode"):
+        return 0
+    if prop("HardwareAirplaneMode"):
+        notify("airplane-mode-symbolic", "Hardware Airplane Mode")
+        return 0
+    enable = not prop("AirplaneMode")
+    try:
+        plugin.call_sync("org.freedesktop.DBus.Properties.Set",
+                         GLib.Variant("(ssv)", (RFKILL[2], prefix + "AirplaneMode",
+                                                GLib.Variant("b", enable))),
+                         Gio.DBusCallFlags.NONE, -1, None)
+    except GLib.Error as error:
+        log(f"cannot set {prefix}AirplaneMode: {error.message}")
+        return 1
+    if bluetooth:
+        if enable:
+            notify("bluetooth-disabled-symbolic", "Bluetooth Disabled")
+        else:
+            notify("bluetooth-active-symbolic", "Bluetooth Enabled")
+    elif enable:
+        notify("airplane-mode-symbolic", "Airplane Mode Enabled")
+    else:
+        notify("airplane-mode-disabled-symbolic", "Airplane Mode Disabled")
+    return 0
+
+
+def main(argv):
+    actions = {
+        "eject": eject,
+        "battery": battery,
+        "rfkill": lambda: rfkill(False),
+        "bluetooth": lambda: rfkill(True),
+    }
+    if len(argv) != 2 or argv[1] not in actions:
+        print(f"usage: {PROG} {'|'.join(actions)}", file=sys.stderr)
+        return 2
+    return actions[argv[1]]()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
