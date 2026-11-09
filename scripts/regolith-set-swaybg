@@ -2,7 +2,10 @@
 # Draw the sway background from the regolith.wallpaper.* resources, the way
 # the X11 session draws them through org.gnome.desktop.background:
 #
-#   - regolith.wallpaper.file: an image, or a GNOME wallpaper XML file;
+#   - regolith.wallpaper.file: an image, a GNOME wallpaper XML file, or a
+#     folder of pictures;
+#   - regolith.wallpaper.interval: for a folder, how many seconds each picture
+#     stays (a positive whole number); otherwise one picture for the session;
 #   - regolith.wallpaper.color.primary, .color.secondary and
 #     .color.shading.type (solid, vertical or horizontal): the background when
 #     there is no image. Colours can be anything GNOME accepts: #RGB, #RRGGBB,
@@ -19,6 +22,12 @@
 # When regolith.wallpaper.file is one picture of that pair, the one for the
 # current style is drawn. With --follow-style, the script keeps running and
 # draws the background again whenever the style changes.
+#
+# Folders and GNOME slideshows keep moving after this script returns:
+# regolith-wallpaper-cycle draws their pictures in turn, through this script
+# run with --picture <mode> <colour> <secondary colour> <shading type>
+# <folder or slideshow>, which reads the pictures from its standard input,
+# each followed by a NUL byte, and writes a newline once each one is drawn.
 
 set -uo pipefail
 
@@ -31,6 +40,51 @@ warn() {
 
 resource() {
   trawlcat "$1" ""
+}
+
+# sway_path <file>: set sway_name to the file name as sway's background
+# command reads it, which expands it like a shell word: ASCII characters
+# other than letters, digits and /._- are escaped
+sway_path() {
+  local LC_ALL=C name=$1 c i n
+  sway_name=
+  for (( i = 0; i < ${#name}; i++ )); do
+    c=${name:i:1}
+    printf -v n '%d' "'$c"
+    if [[ $c == [A-Za-z0-9/._-] ]] || (( n > 127 )); then
+      sway_name+=$c
+    else
+      sway_name+="\\$c"
+    fi
+  done
+}
+
+# cycle <regolith-wallpaper-cycle arguments...>: the copy next to this script
+# is preferred, as when it runs from the source tree
+cycle() {
+  local helper=${BASH_SOURCE[0]%/*}/regolith-wallpaper-cycle
+  if [[ ${BASH_SOURCE[0]} != */* || ! -f $helper ]]; then
+    helper=$(command -v regolith-wallpaper-cycle) || {
+      warn "regolith-wallpaper-cycle is not installed"
+      return 1
+    }
+  fi
+  "$BASH" "$helper" "$@"
+}
+
+# start_cycle <folder|slideshow> [<interval>]: hand the wallpaper over to
+# regolith-wallpaper-cycle, which draws its pictures with --picture
+start_cycle() {
+  local self=${BASH_SOURCE[0]} settings
+  [[ $self == /* ]] || self=$PWD/$self
+  printf -v settings '%s\n' "$mode" "$color" "$secondary" "$shading"
+  local draw=("$BASH" "$self" --picture "$mode" "$color" "$secondary" "$shading" "$wallpaper")
+  if [[ $1 == folder ]]; then
+    cycle folder sway "$wallpaper" "$2" "$settings" "${draw[@]}"
+  else
+    cycle slideshow sway "$wallpaper" "$settings" "${draw[@]}"
+  fi
+  exit
 }
 
 # to_hex <colour>: print the colour as #rrggbb, or fail
@@ -161,6 +215,21 @@ os.replace(tmp, path)
 EOF
 }
 
+# draw_colours: the background without an image: the gradient between the
+# primary and secondary colours, or else the primary colour
+draw_colours() {
+  local second
+  if [[ -n $secondary && ( $shading == vertical || $shading == horizontal ) ]]; then
+    if second=$(to_hex "$secondary"); then
+      draw_gradient "$shading" "$color" "$second" && exit 0
+    else
+      warn "regolith.wallpaper.color.secondary: not a colour: '$secondary'"
+    fi
+  fi
+  rm -f "$GRADIENT_DIR"/gradient-*.png
+  exec swaymsg output "*" background "$color" solid_color
+}
+
 # draw_gradient <vertical|horizontal> <#rrggbb> <#rrggbb>: give each active
 # output a gradient image of its own size; fail if there is no output
 draw_gradient() {
@@ -193,6 +262,28 @@ draw_gradient() {
   done
 }
 
+# draw_picture <picture>: one picture of a folder or slideshow
+draw_picture() {
+  if [[ -n $1 ]]; then
+    rm -f "$GRADIENT_DIR"/gradient-*.png
+    sway_path "$1"
+    exec swaymsg output "*" background "$sway_name" "$mode" "$color"
+  fi
+  # A folder without pictures: the colours, as for a missing file
+  warn "regolith.wallpaper.file: no pictures in '$source'"
+  draw_colours
+}
+
+if [[ ${1-} == --picture ]]; then
+  # The pictures of a folder or slideshow, from regolith-wallpaper-cycle
+  mode=${2-} color=${3-} secondary=${4-} shading=${5-} source=${6-}
+  while IFS= read -r -d '' picture; do
+    ( draw_picture "$picture" ) > /dev/null
+    echo
+  done
+  exit 0
+fi
+
 if [[ ${1-} == --follow-style ]]; then
   # Draw the background again on each change of the Default/Dark style
   gsettings monitor org.gnome.desktop.interface color-scheme |
@@ -211,6 +302,7 @@ shading=$(resource regolith.wallpaper.color.shading.type)
 
 if [[ -z $wallpaper && -z $primary ]]; then
   # Nothing is set: the background is the user's to manage
+  cycle stop sway
   exit 0
 fi
 
@@ -234,52 +326,57 @@ fi
 if [[ -n $wallpaper ]]; then
   wallpaper=${wallpaper/#\~/$HOME}
   wallpaper=$(style_wallpaper "$wallpaper")
-  if [[ ! -f $wallpaper ]]; then
+  if [[ -d $wallpaper ]]; then
+    # A folder: its pictures in turn
+    start_cycle folder "$(resource regolith.wallpaper.interval)"
+  elif [[ ! -f $wallpaper ]]; then
     warn "regolith.wallpaper.file: no such file: '$wallpaper'"
     wallpaper=
   fi
 fi
 
-if [[ -z $wallpaper ]]; then
-  if [[ -n $secondary && ( $shading == vertical || $shading == horizontal ) ]]; then
-    if second=$(to_hex "$secondary"); then
-      draw_gradient "$shading" "$color" "$second" && exit 0
-    else
-      warn "regolith.wallpaper.color.secondary: not a colour: '$secondary'"
-    fi
-  fi
-  rm -f "$GRADIENT_DIR"/gradient-*.png
-  exec swaymsg output "*" background "$color" solid_color
-fi
-
-rm -f "$GRADIENT_DIR"/gradient-*.png
 # A GNOME wallpaper XML file (a slideshow, root element <background>, or a
 # wallpaper list, <wallpapers>) names the images to draw. Any other file is
 # an image; SVG images are XML too, so the root element decides.
-is_xml=false
-if file -b "$wallpaper" | grep -q text; then
-  case $(xmllint --xpath "name(/*)" "$wallpaper" 2> /dev/null) in
-    background | wallpapers) is_xml=true ;;
-  esac
+xml=
+if [[ -n $wallpaper ]] && file -b "$wallpaper" | grep -q text; then
+  xml=$(xmllint --xpath "name(/*)" "$wallpaper" 2> /dev/null)
+fi
+if [[ $xml == background ]]; then
+  entries=$(xmllint --xpath "count(/background/static | /background/transition)" "$wallpaper" 2> /dev/null)
+  if [[ $entries =~ ^[1-9] ]]; then
+    # A slideshow: the picture of the moment, on the slideshow's own clock
+    start_cycle slideshow
+  fi
 fi
 
-if [[ $is_xml == true ]]; then
-  # The largest size, else the first image of a slideshow (X11 shows the
-  # one for the time of day)
+# From here on the background is drawn once: no folder or slideshow moves it
+cycle stop sway
+
+if [[ -z $wallpaper ]]; then
+  draw_colours
+fi
+
+rm -f "$GRADIENT_DIR"/gradient-*.png
+if [[ $xml == background || $xml == wallpapers ]]; then
+  # The largest size of a wallpaper list, if there is an image at all
   image_path=$(xmllint "$wallpaper" --xpath "string(*//size[last()]/text())")
   [[ -n $image_path ]] || image_path=$(xmllint "$wallpaper" --xpath "normalize-space((//static/file)[1])")
   if [[ -z $image_path ]]; then
     warn "regolith.wallpaper.file: no image in '$wallpaper'"
     exec swaymsg output "*" background "$color" solid_color
   fi
-  swaymsg output "*" background "$image_path" "$mode" "$color"
+  sway_path "$image_path"
+  swaymsg output "*" background "$sway_name" "$mode" "$color"
   while read -r name width height; do
     wallpaper_file=$(xmllint "$wallpaper" --xpath "string(*//size[@width=$width][@height=$height]/text())")
 
     if [[ -n "$wallpaper_file" ]]; then
-      swaymsg output "\"$name\"" background "$wallpaper_file" "$mode" "$color"
+      sway_path "$wallpaper_file"
+      swaymsg output "\"$name\"" background "$sway_name" "$mode" "$color"
     fi
   done < <(swaymsg -t get_outputs | jq -r '.[] | select(.active) | "\(.name) \(.current_mode.width) \(.current_mode.height)"')
 else
-  exec swaymsg output "*" background "$wallpaper" "$mode" "$color"
+  sway_path "$wallpaper"
+  exec swaymsg output "*" background "$sway_name" "$mode" "$color"
 fi

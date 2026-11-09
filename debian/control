@@ -51,7 +51,8 @@ Recommends: regolith-i3-compositor,
   regolith-i3-next-workspace,
   regolith-i3-session,
   regolith-i3-touchpad-gestures,
-  regolith-i3-unclutter
+  regolith-i3-unclutter,
+  regolith-i3-wallpaper
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -388,11 +389,36 @@ Depends: ${misc:Depends},
     jq,
     python3,
     trawlcat,
+    regolith-wallpaper-cycle,
     regolith-wm-config,
     x11-common
 Description: Draw the Regolith wallpaper in sway
  Sets the sway background from the regolith.wallpaper Xresources: an image,
- a colour, or a gradient between two colours, as in the X11 session.
+ a colour, or a gradient between two colours, as in the X11 session. A
+ folder of pictures is shown in turn, and a GNOME slideshow follows its
+ own clock.
+
+Package: regolith-i3-wallpaper
+Architecture: any
+Depends: ${misc:Depends},
+    gsettings-desktop-schemas,
+    python3,
+    python3-gi,
+    regolith-wallpaper-cycle,
+    regolith-wm-config,
+    x11-xserver-utils
+Description: Show a folder of pictures as the Regolith wallpaper in i3
+ When the regolith.wallpaper.file Xresource names a folder, sets the GNOME
+ desktop background to its pictures in turn.
+
+Package: regolith-wallpaper-cycle
+Architecture: any
+Depends: ${misc:Depends},
+    python3
+Description: Rotate the Regolith wallpaper through a folder or a slideshow
+ Deals the pictures of a folder in shuffled order, or plays a GNOME
+ slideshow on its own clock, for as long as the window manager runs. Used
+ by regolith-sway-background and regolith-i3-wallpaper.
 
 
 Package: regolith-sway-polkit
