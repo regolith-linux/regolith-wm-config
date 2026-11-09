@@ -47,6 +47,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-default-style,
   regolith-i3-gaps,
   regolith-i3-i3xrocks,
+  regolith-wm-window-helpers,
   regolith-i3-ilia,
   regolith-i3-next-workspace,
   regolith-i3-session,
@@ -65,6 +66,7 @@ Recommends: regolith-sway-background,
   regolith-sway-control-center-default | regolith-sway-control-center,
   regolith-sway-default-style,
   regolith-sway-gaps,
+  regolith-wm-window-helpers,
   regolith-sway-grimshot,
   regolith-sway-gsd,
   regolith-sway-gtklock,
@@ -335,6 +337,18 @@ Depends: ${misc:Depends},
   regolith-wm-config
 Description: Configuration for navigation
  Keybindings for workspace navigation.
+
+Package: regolith-wm-window-helpers
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  python3,
+  python3-xlib,
+  xdg-utils
+Description: Window helper keys for i3 and sway
+ Keybindings that focus the browser or the file manager, or start it when
+ no window of it is open, pop the focused window out as a centred sticky
+ floating window and back, and switch the focused window's transparency.
 
 Package: regolith-sway-dbus-activation
 Architecture: any
