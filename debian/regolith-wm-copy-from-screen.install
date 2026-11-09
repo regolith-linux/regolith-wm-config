@@ -1,0 +1,2 @@
+usr/share/regolith/common/config.d/80_copy_from_screen
+scripts/regolith-copy-from-screen usr/bin

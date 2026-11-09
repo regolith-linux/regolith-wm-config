@@ -48,6 +48,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-wallpaper-folder,
   regolith-i3-default-style,
   regolith-i3-gaps,
+  regolith-wm-copy-from-screen,
   regolith-i3-i3xrocks,
   regolith-i3-ilia,
   regolith-i3-next-workspace,
@@ -79,6 +80,7 @@ Recommends: regolith-sway-background,
   regolith-sway-media-keys,
   regolith-sway-next-workspace,
   regolith-sway-polkit,
+  regolith-wm-copy-from-screen,
   regolith-sway-screensharing,
   regolith-sway-session,
   regolith-sway-touchpad-gestures,
@@ -344,6 +346,26 @@ Depends: ${misc:Depends},
   regolith-wm-config
 Description: Configuration for windows and workspaces
  Keybindings to navigate and manage windows and workspaces.
+
+Package: regolith-wm-copy-from-screen
+Architecture: any
+Depends: ${misc:Depends},
+  libnotify-bin,
+  python3,
+  regolith-wm-config
+Recommends:
+  grim,
+  imagemagick,
+  slop,
+  slurp,
+  tesseract-ocr,
+  wl-clipboard,
+  xclip,
+  zbar-tools
+Description: Copy text, QR codes and colours from the screen
+ Keybindings that copy the text recognised in an area of the screen, the
+ content of a QR code shown in it, or the colour of a point to the clipboard,
+ in both the i3 and the sway session.
 
 Package: regolith-wm-navigation
 Architecture: any
