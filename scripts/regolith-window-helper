@@ -1,0 +1,886 @@
+#!/usr/bin/python3
+"""Window helpers for the Regolith i3 and sway sessions.
+
+    regolith-window-helper focus-or-launch [--browser] [DESKTOP-ID]
+    regolith-window-helper pop-out [--width PERCENT] [--height PERCENT]
+    regolith-window-helper transparency [--opacity VALUE]
+    regolith-window-helper track
+
+focus-or-launch focuses a window of the application named by a desktop-file
+identifier, or starts the application when none of its windows exists. With
+--browser and an empty identifier it uses the default web browser.
+
+pop-out makes the focused window a centred, sticky floating window, and puts
+it back the way it was on the next press.
+
+transparency switches the focused window between fully opaque and the given
+opacity.
+
+track runs once per session (exec_always) and records the order in which
+windows opened and were focused, which focus-or-launch relies on.
+
+The window manager is reached through the IPC socket named by SWAYSOCK or
+I3SOCK. State is kept per window-manager process under XDG_RUNTIME_DIR, so
+it survives configuration reloads and i3 restarts.
+"""
+import fcntl
+import json
+import math
+import os
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+from fractions import Fraction
+
+PROGRAM = "regolith-window-helper"
+
+IPC_MAGIC = b"i3-ipc"
+IPC_COMMAND = 0
+IPC_SUBSCRIBE = 2
+IPC_GET_TREE = 4
+IPC_GET_VERSION = 7
+IPC_SEND_TICK = 10
+IPC_EVENT_BIT = 1 << 31
+IPC_EVENT_WINDOW = 3
+IPC_EVENT_SHUTDOWN = 6
+IPC_EVENT_TICK = 7
+
+DEFAULT_FILES = "org.gnome.Nautilus"
+DEFAULT_POP_OUT = (60, 70)
+DEFAULT_OPACITY = 0.85
+OPAQUE = 0xFFFFFFFF
+SYNC_PREFIX = PROGRAM + " sync "
+FIELD_CODES = set("fFuUdDnNickvm")
+
+
+def log(message):
+    print(f"{PROGRAM}: {message}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Window manager IPC
+# ---------------------------------------------------------------------------
+
+class IPC:
+    """One connection to the i3 or sway IPC socket."""
+
+    def __init__(self, path, timeout=5.0):
+        self.path = path
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(timeout)
+        self.sock.connect(path)
+        creds = self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                     struct.calcsize("3i"))
+        self.peer_pid = struct.unpack("3i", creds)[0]
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def _read(self, size):
+        data = b""
+        while len(data) < size:
+            chunk = self.sock.recv(size - len(data))
+            if not chunk:
+                raise ConnectionError("IPC connection closed")
+            data += chunk
+        return data
+
+    def send(self, kind, payload=""):
+        body = payload.encode("utf-8")
+        self.sock.sendall(IPC_MAGIC + struct.pack("<II", len(body), kind) + body)
+
+    def receive(self):
+        header = self._read(14)
+        if header[:6] != IPC_MAGIC:
+            raise ConnectionError("bad IPC reply")
+        length, kind = struct.unpack("<II", header[6:])
+        return kind, json.loads(self._read(length).decode("utf-8", "replace"))
+
+    def request(self, kind, payload=""):
+        self.send(kind, payload)
+        while True:
+            reply_kind, reply = self.receive()
+            if not reply_kind & IPC_EVENT_BIT:
+                return reply
+
+    def command(self, text):
+        return self.request(IPC_COMMAND, text)
+
+    def tree(self):
+        return self.request(IPC_GET_TREE)
+
+
+def socket_path():
+    for variable in ("SWAYSOCK", "I3SOCK"):
+        path = os.environ.get(variable)
+        if path and os.path.exists(path):
+            return path
+    for program in ("sway", "i3"):
+        try:
+            result = subprocess.run([program, "--get-socketpath"],
+                                    capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        path = result.stdout.strip()
+        if result.returncode == 0 and path and os.path.exists(path):
+            return path
+    return None
+
+
+def connect():
+    path = socket_path()
+    if not path:
+        raise ConnectionError("no i3 or sway IPC socket found")
+    return IPC(path)
+
+
+def wm_name(ipc):
+    version = ipc.request(IPC_GET_VERSION)
+    text = " ".join(str(version.get(key, ""))
+                    for key in ("variant", "human_readable", "loaded_config_file_name"))
+    return "sway" if "sway" in text.lower() else "i3"
+
+
+def criteria(node):
+    return f"[con_id={int(node['id'])}]"
+
+
+def quote(text):
+    return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+# ---------------------------------------------------------------------------
+# Tree helpers
+# ---------------------------------------------------------------------------
+
+def is_view(node):
+    if node.get("type") not in ("con", "floating_con"):
+        return False
+    return (node.get("window") is not None or node.get("app_id") is not None
+            or node.get("shell") is not None)
+
+
+def windows(tree):
+    """(window, workspace) pairs for every application window."""
+    found = []
+
+    def walk(node, workspace):
+        if node.get("type") == "dockarea":
+            return
+        if node.get("type") == "workspace":
+            workspace = node
+        if is_view(node):
+            found.append((node, workspace))
+        for key in ("nodes", "floating_nodes"):
+            for child in node.get(key) or []:
+                walk(child, workspace)
+
+    walk(tree, None)
+    return found
+
+
+def focused(tree):
+    for node, workspace in windows(tree):
+        if node.get("focused"):
+            return node, workspace
+    return None, None
+
+
+def is_floating(node):
+    return node.get("floating") in ("auto_on", "user_on") or node.get("type") == "floating_con"
+
+
+def window_key(node, wm):
+    # i3 gives containers new ids when it restarts, but the X11 window of an
+    # application stays the same. sway keeps its ids across reloads.
+    if wm == "i3" and node.get("window"):
+        return "x%d" % int(node["window"])
+    return "c%d" % int(node["id"])
+
+
+# ---------------------------------------------------------------------------
+# State files
+# ---------------------------------------------------------------------------
+
+class State:
+    """JSON files for one window-manager process."""
+
+    def __init__(self, wm, pid):
+        base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(
+            tempfile.gettempdir(), f"{PROGRAM}-{os.getuid()}")
+        self.dir = os.path.join(base, PROGRAM, f"{wm}-{pid}")
+        os.makedirs(self.dir, mode=0o700, exist_ok=True)
+
+    def path(self, name):
+        return os.path.join(self.dir, name)
+
+    def load(self, name, default):
+        try:
+            with open(self.path(name), "r", encoding="utf-8") as stream:
+                value = json.load(stream)
+        except (OSError, ValueError):
+            return default
+        return value if isinstance(value, type(default)) else default
+
+    def save(self, name, value):
+        fd, temporary = tempfile.mkstemp(dir=self.dir, prefix="." + name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(value, stream)
+            os.replace(temporary, self.path(name))
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+    def lock(self, name):
+        fd = os.open(self.path(name), os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def tracker_running(self):
+        try:
+            fd = os.open(self.path("track.lock"), os.O_RDWR)
+        except OSError:
+            return False
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        finally:
+            os.close(fd)
+        return False
+
+
+def session():
+    ipc = connect()
+    wm = wm_name(ipc)
+    return ipc, wm, State(wm, ipc.peer_pid)
+
+
+# ---------------------------------------------------------------------------
+# Desktop files
+# ---------------------------------------------------------------------------
+
+def data_dirs():
+    home = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share")
+    system = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share/:/usr/share/"
+    return [home] + [path for path in system.split(":") if path]
+
+
+def find_in(applications, desktop_id):
+    """The file under applications/ whose desktop-file id is desktop_id."""
+    direct = os.path.join(applications, desktop_id)
+    if os.path.isfile(direct):
+        return direct
+
+    def walk(directory, prefix):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            return None
+        for name in entries:
+            path = os.path.join(directory, name)
+            if not os.path.isdir(path):
+                continue
+            sub_prefix = prefix + name + "-"
+            if not desktop_id.startswith(sub_prefix):
+                continue
+            rest = desktop_id[len(sub_prefix):]
+            if os.path.isfile(os.path.join(path, rest)):
+                return os.path.join(path, rest)
+            found = walk(path, sub_prefix)
+            if found:
+                return found
+        return None
+
+    return walk(applications, "")
+
+
+def unescape_value(value):
+    out = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            nxt = value[index + 1]
+            out.append({"s": " ", "n": "\n", "t": "\t", "r": "\r",
+                        "\\": "\\"}.get(nxt, "\\" + nxt))
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def read_desktop_entry(path):
+    entry = {}
+    group = None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as stream:
+            for raw in stream:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    group = line[1:-1]
+                    continue
+                if group != "Desktop Entry" or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key not in entry:
+                    entry[key] = unescape_value(value.strip())
+    except OSError:
+        return None
+    return entry
+
+
+def lookup_desktop(desktop_id):
+    """The desktop entry the desktop would use for an id, or None.
+
+    The first data directory holding the id wins; a hidden entry there
+    hides the application altogether.
+    """
+    if not desktop_id.endswith(".desktop"):
+        desktop_id += ".desktop"
+    for directory in data_dirs():
+        path = find_in(os.path.join(directory, "applications"), desktop_id)
+        if path is None:
+            continue
+        entry = read_desktop_entry(path)
+        if entry is None:
+            return None
+        if entry.get("Hidden", "").strip().lower() == "true":
+            return None
+        entry["_path"] = path
+        return entry
+    return None
+
+
+def exec_argv(exec_line):
+    """Split an Exec value into argv, with its field codes taken out."""
+    args = []
+    current = []
+    has_arg = False
+    quoted = False
+    index = 0
+    while index < len(exec_line):
+        char = exec_line[index]
+        if quoted:
+            if char == "\\" and index + 1 < len(exec_line):
+                current.append(exec_line[index + 1])
+                index += 2
+                continue
+            if char == '"':
+                quoted = False
+            else:
+                current.append(char)
+        elif char == '"':
+            quoted = True
+            has_arg = True
+        elif char in " \t\n":
+            if has_arg or current:
+                args.append("".join(current))
+            current = []
+            has_arg = False
+        elif char == "\\" and index + 1 < len(exec_line):
+            current.append(exec_line[index + 1])
+            has_arg = True
+            index += 2
+            continue
+        else:
+            current.append(char)
+            has_arg = True
+        index += 1
+    if has_arg or current:
+        args.append("".join(current))
+
+    argv = []
+    for arg in args:
+        if len(arg) == 2 and arg[0] == "%" and arg[1] in FIELD_CODES:
+            continue
+        out = []
+        index = 0
+        while index < len(arg):
+            if arg[index] == "%" and index + 1 < len(arg):
+                code = arg[index + 1]
+                if code == "%":
+                    out.append("%")
+                elif code not in FIELD_CODES:
+                    out.append(arg[index:index + 2])
+                index += 2
+                continue
+            out.append(arg[index])
+            index += 1
+        argv.append("".join(out))
+    return argv
+
+
+def launch(entry):
+    argv = exec_argv(entry.get("Exec", ""))
+    if not argv:
+        log(f"{entry.get('_path')}: no command to run")
+        return
+    cwd = entry.get("Path") or os.path.expanduser("~")
+    if not os.path.isdir(cwd):
+        cwd = "/"
+    try:
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, cwd=cwd, close_fds=True,
+                         start_new_session=True)
+    except OSError as error:
+        log(f"cannot start {argv[0]}: {error}")
+
+
+def default_browser():
+    try:
+        result = subprocess.run(["xdg-settings", "get", "default-web-browser"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+# ---------------------------------------------------------------------------
+# Focus history
+# ---------------------------------------------------------------------------
+
+def empty_history():
+    return {"open": [], "focus": {}, "seq": 0, "tick": ""}
+
+
+def synced_history(ipc, state):
+    """The tracker's history, once it has seen every event up to now."""
+    if not state.tracker_running():
+        return state.load("history.json", empty_history())
+    nonce = SYNC_PREFIX + "%d-%d" % (os.getpid(), time.monotonic_ns())
+    try:
+        ipc.request(IPC_SEND_TICK, nonce)
+    except (OSError, ValueError, ConnectionError):
+        return state.load("history.json", empty_history())
+    deadline = time.monotonic() + 1.5
+    while True:
+        history = state.load("history.json", empty_history())
+        if history.get("tick") == nonce or time.monotonic() > deadline:
+            return history
+        time.sleep(0.02)
+
+
+def matches(node, names):
+    props = node.get("window_properties") or {}
+    for value in (node.get("app_id"), props.get("class"), props.get("instance")):
+        if isinstance(value, str) and value.casefold() in names:
+            return True
+    return False
+
+
+def focus_or_launch(args):
+    browser = False
+    if args and args[0] == "--browser":
+        browser = True
+        args = args[1:]
+    desktop_id = args[0].strip() if args else ""
+    if not desktop_id:
+        desktop_id = default_browser() if browser else DEFAULT_FILES
+    if not desktop_id:
+        log("no application configured")
+        return 1
+    entry = lookup_desktop(desktop_id)
+    if entry is None:
+        log(f"no desktop file for {desktop_id}")
+        return 1
+
+    names = {desktop_id[:-len(".desktop")] if desktop_id.endswith(".desktop")
+             else desktop_id}
+    startup_class = entry.get("StartupWMClass", "").strip()
+    if startup_class:
+        names.add(startup_class)
+    names = {name.casefold() for name in names}
+
+    ipc, wm, state = session()
+    tree = ipc.tree()
+    own = [node for node, _workspace in windows(tree) if matches(node, names)]
+    if not own:
+        launch(entry)
+        return 0
+    current, _workspace = focused(tree)
+    is_own = current is not None and any(node["id"] == current["id"] for node in own)
+    if len(own) == 1:
+        if not is_own:
+            ipc.command(f"{criteria(own[0])} focus")
+        return 0
+
+    history = synced_history(ipc, state)
+    order = {key: index for index, key in enumerate(history.get("open", []))}
+    recency = history.get("focus", {})
+
+    def opening(node):
+        return (order.get(window_key(node, wm), len(order)), int(node["id"]))
+
+    own.sort(key=opening)
+    if is_own:
+        index = next(i for i, node in enumerate(own) if node["id"] == current["id"])
+        target = own[(index + 1) % len(own)]
+    else:
+        seen = [node for node in own if window_key(node, wm) in recency]
+        if seen:
+            target = max(seen, key=lambda node: recency[window_key(node, wm)])
+        else:
+            target = own[0]
+    # Focusing a window shows its workspace on its own output, and brings a
+    # window hidden in the scratchpad to the current workspace. A scratchpad
+    # window that is already showing stays showing.
+    ipc.command(f"{criteria(target)} focus")
+    return 0
+
+
+def track(_args):
+    ipc = connect()
+    wm = wm_name(ipc)
+    pid = ipc.peer_pid
+    state = State(wm, pid)
+    lock = os.open(state.path("track.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0  # another tracker already serves this session
+
+    history = state.load("history.json", empty_history())
+    for key, default in empty_history().items():
+        if not isinstance(history.get(key), type(default)):
+            history[key] = default
+
+    while True:
+        try:
+            run_tracker(ipc, wm, state, history)
+        except (OSError, ValueError, ConnectionError):
+            pass
+        ipc.close()
+        # The window manager restarts in place (i3) or is gone; wait for it.
+        ipc = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                ipc = connect()
+                break
+            except (OSError, ConnectionError):
+                time.sleep(0.2)
+        if ipc is None or ipc.peer_pid != pid:
+            return 0
+
+
+def run_tracker(ipc, wm, state, history):
+    events = ipc
+    events.sock.settimeout(None)
+    commands = IPC(ipc.path)
+    try:
+        reply = events.request(IPC_SUBSCRIBE, json.dumps(["window", "tick", "shutdown"]))
+        if not reply.get("success"):
+            raise ConnectionError("cannot subscribe to window events")
+        # Forget windows that went away while nobody was listening, and
+        # append the ones that appeared, in container order.
+        present = [window_key(node, wm) for node, _ws in windows(commands.tree())]
+        history["open"] = [key for key in history["open"] if key in present]
+        history["open"] += sorted((key for key in present if key not in history["open"]),
+                                  key=lambda key: (key[0], int(key[1:])))
+        history["focus"] = {key: seq for key, seq in history["focus"].items()
+                            if key in present}
+        state.save("history.json", history)
+        while True:
+            kind, event = events.receive()
+            if kind == IPC_EVENT_BIT | IPC_EVENT_SHUTDOWN:
+                return
+            if kind == IPC_EVENT_BIT | IPC_EVENT_TICK:
+                payload = event.get("payload") or ""
+                if payload.startswith(SYNC_PREFIX):
+                    history["tick"] = payload
+                    state.save("history.json", history)
+                continue
+            if kind != IPC_EVENT_BIT | IPC_EVENT_WINDOW:
+                continue
+            node = event.get("container") or {}
+            if node.get("id") is None:
+                continue
+            key = window_key(node, wm)
+            change = event.get("change")
+            if change == "new":
+                if key not in history["open"]:
+                    history["open"].append(key)
+            elif change == "focus":
+                if key not in history["open"]:
+                    history["open"].append(key)
+                history["seq"] += 1
+                history["focus"][key] = history["seq"]
+            elif change == "close":
+                if key in history["open"]:
+                    history["open"].remove(key)
+                history["focus"].pop(key, None)
+            elif change == "floating":
+                unpop_tiled(commands, state, node, key)
+                continue
+            else:
+                continue
+            state.save("history.json", history)
+    finally:
+        commands.close()
+
+
+# ---------------------------------------------------------------------------
+# Pop out
+# ---------------------------------------------------------------------------
+
+def percent(text, default):
+    try:
+        value = Fraction(str(text).strip())
+    except (ValueError, ZeroDivisionError):
+        return default
+    if value <= 0 or value > 100:
+        return default
+    return value
+
+
+def place(x, y, width, height):
+    return (f"resize set {int(width)} px {int(height)} px, "
+            f"move absolute position {int(x)} px {int(y)} px")
+
+
+def find_node(tree, con_id):
+    for node, _workspace in windows(tree):
+        if node.get("id") == con_id:
+            return node
+    return None
+
+
+def settle(ipc, wm, con_id, x, y, width, height):
+    """Ask sway again when the client refused the frame size.
+
+    sway sizes a floating container to the size its client commits. A
+    client that cannot go as small as asked commits a bigger size and the
+    frame grows with it, at the same position; asking once more keeps the
+    frame at the asked size.
+    """
+    if wm != "sway":
+        return
+    target = {"x": int(x), "y": int(y), "width": int(width), "height": int(height)}
+    deadline = time.monotonic() + 1.0
+    retries = 0
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        node = find_node(ipc.tree(), con_id)
+        if node is None or not is_floating(node):
+            return
+        rect = {key: int(value) for key, value in (node.get("rect") or {}).items()}
+        if all(abs(rect.get(key, 0) - value) <= 1 for key, value in target.items()):
+            continue
+        grown = (abs(rect.get("x", 0) - target["x"]) <= 1
+                 and abs(rect.get("y", 0) - target["y"]) <= 1
+                 and rect.get("width", 0) >= target["width"]
+                 and rect.get("height", 0) >= target["height"])
+        if not grown or retries >= 2:
+            return
+        retries += 1
+        ipc.command(f"[con_id={int(con_id)}] " + place(x, y, width, height))
+
+
+def unpop_tiled(ipc, state, node, key):
+    """A popped-out window the user tiled is no longer popped out.
+
+    Give it back the sticky state it had before it was popped out.
+    """
+    if is_floating(node):
+        return
+    lock = state.lock("pop-out.lock")
+    try:
+        records = state.load("pop-out.json", {})
+        record = records.pop(key, None)
+        if record is None:
+            return
+        state.save("pop-out.json", records)
+    finally:
+        os.close(lock)
+    sticky = "enable" if record.get("sticky") else "disable"
+    ipc.command(f"{criteria(node)} sticky {sticky}")
+
+
+def pop_out(args):
+    width, height = DEFAULT_POP_OUT
+    index = 0
+    while index < len(args):
+        if args[index] == "--width" and index + 1 < len(args):
+            width = percent(args[index + 1], DEFAULT_POP_OUT[0])
+            index += 2
+        elif args[index] == "--height" and index + 1 < len(args):
+            height = percent(args[index + 1], DEFAULT_POP_OUT[1])
+            index += 2
+        else:
+            index += 1
+
+    ipc, wm, state = session()
+    lock = state.lock("pop-out.lock")
+    try:
+        tree = ipc.tree()
+        node, workspace = focused(tree)
+        if node is None or workspace is None or node.get("fullscreen_mode"):
+            return 1
+        if workspace.get("name") == "__i3_scratch":
+            return 1
+        present = {window_key(other, wm) for other, _ws in windows(tree)}
+        records = {key: value for key, value in state.load("pop-out.json", {}).items()
+                   if key in present}
+        key = window_key(node, wm)
+        record = records.pop(key, None)
+        target = criteria(node)
+        if record is not None and is_floating(node) and node.get("sticky"):
+            # Second press: put the window back the way it was.
+            state.save("pop-out.json", records)
+            sticky = "enable" if record.get("sticky") else "disable"
+            steps = []
+            home = record.get("workspace")
+            if record.get("floating"):
+                if home and home != workspace.get("name") and not record.get("sticky"):
+                    steps.append(f"move container to workspace {quote(home)}")
+                rect = record.get("rect") or {}
+                steps.append(f"sticky {sticky}")
+                if rect:
+                    steps.append(place(rect["x"], rect["y"], rect["width"], rect["height"]))
+            else:
+                steps.append("floating disable")
+                if home:
+                    steps.append(f"move container to workspace {quote(home)}")
+                steps.append(f"sticky {sticky}")
+            ipc.command(target + " " + ", ".join(steps))
+            if record.get("floating") and rect:
+                settle(ipc, wm, node["id"], rect["x"], rect["y"], rect["width"], rect["height"])
+            return 0
+
+        # First press: remember the current state, then pop the window out.
+        floating = is_floating(node)
+        records[key] = {
+            "workspace": workspace.get("name"),
+            "floating": floating,
+            "sticky": bool(node.get("sticky")),
+            "rect": dict(node.get("rect") or {}) if floating else None,
+        }
+        state.save("pop-out.json", records)
+        area = workspace["rect"]
+        frame_width = math.floor(area["width"] * width / 100)
+        frame_height = math.floor(area["height"] * height / 100)
+        x = area["x"] + (area["width"] - frame_width) // 2
+        y = area["y"] + (area["height"] - frame_height) // 2
+        ipc.command(f"{target} floating enable, sticky enable, "
+                    + place(x, y, frame_width, frame_height))
+        settle(ipc, wm, node["id"], x, y, frame_width, frame_height)
+        return 0
+    finally:
+        os.close(lock)
+
+
+# ---------------------------------------------------------------------------
+# Transparency
+# ---------------------------------------------------------------------------
+
+def opacity_setting(text):
+    try:
+        value = float(str(text).strip())
+    except ValueError:
+        return DEFAULT_OPACITY
+    if not math.isfinite(value) or value < 0.1 or value > 1:
+        return DEFAULT_OPACITY
+    return value
+
+
+def x11_toggle(window_id, opacity):
+    from Xlib import X, display
+
+    disp = display.Display()
+    try:
+        window = disp.create_resource_object("window", int(window_id))
+        atom = disp.intern_atom("_NET_WM_WINDOW_OPACITY")
+        cardinal = disp.intern_atom("CARDINAL")
+        prop = window.get_property(atom, X.AnyPropertyType, 0, 1)
+        current = None
+        if prop is not None and prop.format == 32 and len(prop.value):
+            current = int(prop.value[0])
+        if current is None or current == OPAQUE:
+            value = min(OPAQUE, int(round(opacity * OPAQUE)))
+            if value >= OPAQUE:
+                window.delete_property(atom)
+            else:
+                window.change_property(atom, cardinal, 32, [value])
+        else:
+            window.delete_property(atom)
+        disp.sync()
+    finally:
+        disp.close()
+
+
+def transparency(args):
+    opacity = DEFAULT_OPACITY
+    if len(args) >= 2 and args[0] == "--opacity":
+        opacity = opacity_setting(args[1])
+
+    ipc, wm, state = session()
+    tree = ipc.tree()
+    node, _workspace = focused(tree)
+    if node is None:
+        return 1
+    if wm == "i3":
+        if not node.get("window"):
+            return 1
+        # The property goes on the application's own window, which is the
+        # one the compositor reads.
+        x11_toggle(node["window"], opacity)
+        return 0
+
+    # sway does not report opacity over IPC; remember it per window.
+    lock = state.lock("opacity.lock")
+    try:
+        present = {window_key(other, wm) for other, _ws in windows(tree)}
+        levels = {key: value for key, value in state.load("opacity.json", {}).items()
+                  if key in present}
+        key = window_key(node, wm)
+        current = levels.get(key, 1.0)
+        new = opacity if current >= 1 else 1.0
+        reply = ipc.command(f"{criteria(node)} opacity {new:.4f}")
+        if all(isinstance(item, dict) and item.get("success") for item in reply):
+            if new >= 1:
+                levels.pop(key, None)
+            else:
+                levels[key] = new
+            state.save("opacity.json", levels)
+    finally:
+        os.close(lock)
+    return 0
+
+
+COMMANDS = {
+    "focus-or-launch": focus_or_launch,
+    "pop-out": pop_out,
+    "transparency": transparency,
+    "track": track,
+}
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] not in COMMANDS:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    try:
+        return COMMANDS[argv[1]](argv[2:])
+    except (OSError, ConnectionError, ValueError) as error:
+        log(str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
