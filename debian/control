@@ -492,12 +492,6 @@ Depends: ${misc:Depends},
 Recommends: gnome-settings-daemon-common,
   upower
 Breaks: regolith-powerd (<< 0.8.0)
-Description: Keys for stay awake, the touchpad, Night Light and the keyboard backlight
- Super+Ctrl+i keeps the session from going idle until it is pressed again,
- Super+Ctrl+t and the laptop touchpad keys switch the touchpad, and
- Super+Ctrl+n switches Night Light. In the sway session the keyboard
- backlight keys step and switch the keyboard backlight. Each key confirms
- the new state with a notification.
- .
- Stay awake holds an idle inhibitor with the GNOME session manager; in the
- sway session regolith-powerd 0.8.0 or later passes it on to logind.
+Description: Quick toggle keys for i3 and sway
+ Keybindings that switch stay awake, the touchpad and Night Light, and in
+ sway the keyboard backlight.
