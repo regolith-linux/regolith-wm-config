@@ -1,0 +1,5 @@
+# Keyboard-backlight keys, through UPower (regolith-quick-toggle). In the X11
+# session gnome-settings-daemon handles these keys, so i3 must not bind them.
+bindsym --locked XF86KbdBrightnessUp exec regolith-quick-toggle keyboard-backlight up
+bindsym --locked XF86KbdBrightnessDown exec regolith-quick-toggle keyboard-backlight down
+bindsym --locked XF86KbdLightOnOff exec regolith-quick-toggle keyboard-backlight toggle

@@ -43,6 +43,7 @@ Depends: ${misc:Depends},
   regolith-wm-config,
   regolith-i3-dbus-activation
 Recommends: regolith-i3-compositor,
+  regolith-wm-quick-toggles,
   regolith-i3-control-center-default | regolith-i3-control-center,
   regolith-i3-default-style,
   regolith-i3-gaps,
@@ -61,6 +62,7 @@ Depends: ${misc:Depends},
   regolith-wm-config,
   regolith-sway-dbus-activation
 Recommends: regolith-sway-background,
+  regolith-wm-quick-toggles,
   regolith-sway-clamshell,
   regolith-sway-control-center-default | regolith-sway-control-center,
   regolith-sway-default-style,
@@ -479,3 +481,17 @@ Depends: ${misc:Depends},
   regolith-wm-config,
   grimshot
 Description: Enable window and screen captures
+
+Package: regolith-wm-quick-toggles
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  gsettings-desktop-schemas,
+  python3,
+  python3-gi
+Recommends: gnome-settings-daemon-common,
+  upower
+Breaks: regolith-powerd (<< 0.8.0)
+Description: Quick toggle keys for i3 and sway
+ Keybindings that switch stay awake, the touchpad and Night Light, and in
+ sway the keyboard backlight.
