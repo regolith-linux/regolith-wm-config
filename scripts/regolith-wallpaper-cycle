@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Keep a wallpaper that moves: the pictures of a folder, or a GNOME slideshow.
-# regolith-set-swaybg (sway) and regolith-i3-wallpaper (i3) run it, each with
-# the command that draws pictures in its session: the command reads pictures
-# from its standard input, each followed by a NUL byte, and writes a newline
-# once each one is drawn. A rotation keeps one such command running.
+# regolith-set-swaybg (sway) and regolith-i3-wallpaper-folder (i3) run it, each
+# with the command that draws pictures in its session: the command reads
+# pictures from its standard input, each followed by a NUL byte, and writes a
+# newline once each one is drawn. A rotation keeps one such command running.
 #
 #   regolith-wallpaper-cycle folder <session> <folder> <interval> <settings> <command...>
 #   regolith-wallpaper-cycle slideshow <session> <file> <settings> <command...>
