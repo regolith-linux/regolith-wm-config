@@ -137,7 +137,10 @@ handle_clamshell() {
   fi
 }
 
-DEFAULT_INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | startswith("eDP")).name ] | .[0]' )
+# The inbuilt display is the first output on a laptop panel connector: eDP,
+# LVDS (older laptops) or DSI (tablets and some small laptops). With none of
+# them, it is empty, not jq's "null", so that the lid close action still runs.
+DEFAULT_INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | test("^(eDP|LVDS|DSI)")).name ] | .[0] // empty' )
 INBUILT_DISPLAY=$( trawlcat wm.clamshell.display "$DEFAULT_INBUILT_DISPLAY" )
 DISPLAY_COUNT=$( swaymsg -t get_outputs --raw | jq 'length')
 CLAMSHELL_ENABLED=$( trawlcat wm.clamshell.enabled "true" )
@@ -167,6 +170,9 @@ fi
 echo "Clamshell requirements not met. Executing lid close action."
 
 if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
+  if [[ -z $INBUILT_DISPLAY ]]; then
+    exit 0
+  fi
   echo "Turning on inbuilt display for lid open"
   exec swaymsg output "$INBUILT_DISPLAY" enable
 elif [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then

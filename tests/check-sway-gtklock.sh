@@ -35,10 +35,16 @@ for arg in "$@"; do printf '[%s]\n' "$arg"; done >> "$STUB_LOG"
 echo -- >> "$STUB_LOG"
 STUB
 
-# The lid close script also asks sway, logind and the power supply
+# The lid close script also asks sway, logind and the power supply. sway's
+# outputs are $STUB_OUTPUTS (a laptop panel alone by default); other
+# commands are logged.
 cat > "$WORK/bin/swaymsg" <<'STUB'
 #!/bin/sh
-if [ "$1" = -t ] && [ "$2" = get_outputs ]; then echo '[{"name":"eDP-1"}]'; fi
+if [ "$1" = -t ] && [ "$2" = get_outputs ]; then
+    echo "${STUB_OUTPUTS:-[{\"name\":\"eDP-1\"}]}"
+    exit 0
+fi
+echo "[swaymsg $*]" >> "$STUB_LOG"
 STUB
 printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/busctl"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/on_ac_power"
@@ -135,5 +141,27 @@ expect 'no regolith-sway-gtklock, SLEEP: wm.program.lock_sway' swaylock '[-f]' -
 run "PATH=$WORK/no-gtklock:$WORK/bin:/usr/bin:/bin regolith-sway-clamshell LID_CLOSE" \
     'wm.lidclose.action.power: SLEEP'
 expect 'no regolith-sway-gtklock, no locker set, SLEEP: still suspends' '[systemctl suspend]'
+
+# Lid close with an external monitor: the laptop panel is turned off, whether
+# it is an eDP, LVDS or DSI output
+for panel in eDP-1 LVDS-1 DSI-1; do
+    export STUB_OUTPUTS="[{\"name\":\"HDMI-A-1\"},{\"name\":\"$panel\"}]"
+    run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP'
+    expect "clamshell, $panel: panel turned off" "[swaymsg output $panel disable]"
+    run 'regolith-sway-clamshell LID_OPEN'
+    expect "clamshell, $panel: panel turned on" "[swaymsg output $panel enable]"
+done
+# Two monitors and no laptop panel: the lid close action runs
+export STUB_OUTPUTS='[{"name":"Virtual-1"},{"name":"HDMI-A-1"}]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP'
+expect 'two monitors, no panel, SLEEP: locks and suspends' '[-d]' -- '[systemctl suspend]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: LOCK'
+expect 'two monitors, no panel, LOCK: locks' --
+run 'regolith-sway-clamshell LID_OPEN'
+expect 'two monitors, no panel: lid open changes nothing'
+# ... unless wm.clamshell.display names the panel
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP' 'wm.clamshell.display: Virtual-1'
+expect 'wm.clamshell.display: that output turned off' '[swaymsg output Virtual-1 disable]'
+unset STUB_OUTPUTS
 
 exit $status
