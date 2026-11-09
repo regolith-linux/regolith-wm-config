@@ -1,0 +1,444 @@
+#!/usr/bin/python3
+"""Quick toggles of the Regolith sessions (65_quick_toggles, 66_keyboard_backlight).
+
+  regolith-quick-toggle stay-awake                  switch stay awake on or off
+  regolith-quick-toggle touchpad toggle|on|off      switch the touchpad
+  regolith-quick-toggle night-light                 switch Night Light
+  regolith-quick-toggle keyboard-backlight up|down|toggle
+                                                    step or switch the keyboard
+                                                    backlight
+
+Every change is confirmed with a desktop notification. Each feature keeps a
+single notification: its id is kept in the session's runtime directory and
+passed back as replaces_id, so a press replaces the previous message, also
+when it comes from another process. Presses of one feature are handled one
+at a time, each starting from the current state.
+
+The touchpad and Night Light keys flip the settings behind the Settings
+switches (org.gnome.desktop.peripherals.touchpad send-events and
+org.gnome.settings-daemon.plugins.color night-light-enabled). As in GNOME,
+any touchpad value other than "enabled" counts as off.
+
+The keyboard backlight goes through UPower's KbdBacklight interface, with
+gnome-settings-daemon's step (a twentieth of the maximum, at least 1). The
+toggle remembers the level it switched off, and restores it, or the maximum
+when nothing is remembered. Without a keyboard backlight the keys do nothing.
+
+Stay awake holds an idle inhibitor with the GNOME session manager
+(org.gnome.SessionManager). In the sway session regolith-powerd (0.8.0 or
+later) passes it on to logind. The inhibitor is held by a background process
+that the key starts and that owns the name org.regolith.StayAwake on the
+session bus, so stay awake is on exactly while that name has an owner. The
+process ends when stay awake is switched off, when the session manager or
+the session bus goes away (at logout), and if it is killed the session
+manager drops the inhibitor along with its connection. Inhibitors of other
+programs are never looked at.
+"""
+
+import fcntl
+import os
+import signal
+import sys
+
+PROG = "regolith-quick-toggle"
+
+TOUCHPAD_SCHEMA = "org.gnome.desktop.peripherals.touchpad"
+NIGHT_LIGHT_SCHEMA = "org.gnome.settings-daemon.plugins.color"
+
+UPOWER = "org.freedesktop.UPower"
+KBD_PATH = "/org/freedesktop/UPower/KbdBacklight"
+KBD_IFACE = "org.freedesktop.UPower.KbdBacklight"
+
+SESSION_MANAGER = "org.gnome.SessionManager"
+SESSION_MANAGER_PATH = "/org/gnome/SessionManager"
+INHIBIT_IDLE = 8
+
+HOLDER_NAME = "org.regolith.StayAwake"
+HOLDER_PATH = "/org/regolith/StayAwake"
+HOLDER_XML = """
+<node>
+  <interface name="org.regolith.StayAwake">
+    <method name="Release"/>
+  </interface>
+</node>
+"""
+
+DBUS = "org.freedesktop.DBus"
+DBUS_PATH = "/org/freedesktop/DBus"
+
+
+def warn(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+
+
+def state_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        base = os.environ.get("XDG_CACHE_HOME") or \
+            os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(base, PROG)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+def lock(feature):
+    """Hold the feature's lock until the process exits."""
+    fd = os.open(os.path.join(state_dir(), feature + ".lock"),
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    # A handler stuck elsewhere must not block the key for good.
+    signal.alarm(30)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    signal.alarm(0)
+    return fd
+
+
+def read_int(path, default=0):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return default
+
+
+def write_int(path, value):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("%d\n" % value)
+    os.replace(tmp, path)
+
+
+# The GI imports take a moment: they come after the lock, so presses are
+# queued in the order they arrived.
+def gio():
+    global Gio, GLib
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib  # noqa: F401
+
+
+def call(bus, name, path, iface, method, args=None, reply=None, timeout=5000):
+    result = bus.call_sync(name, path, iface, method, args,
+                           GLib.VariantType(reply) if reply else None,
+                           Gio.DBusCallFlags.NO_AUTO_START, timeout, None)
+    return result.unpack() if result is not None else ()
+
+
+def has_owner(bus, name):
+    return call(bus, DBUS, DBUS_PATH, DBUS, "NameHasOwner",
+                GLib.Variant("(s)", (name,)), "(b)")[0]
+
+
+def notify(slot, summary, body="", icon=""):
+    """Show the feature's notification, replacing its previous one."""
+    path = os.path.join(state_dir(), slot + ".notification")
+    replaces = read_int(path)
+    if not 0 < replaces < 2 ** 32:
+        replaces = 0
+    hints = {
+        "transient": GLib.Variant("b", True),
+        "x-canonical-private-synchronous": GLib.Variant("s", PROG + "-" + slot),
+        "x-dunst-stack-tag": GLib.Variant("s", PROG + "-" + slot),
+    }
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        nid = call(bus, "org.freedesktop.Notifications",
+                   "/org/freedesktop/Notifications",
+                   "org.freedesktop.Notifications", "Notify",
+                   GLib.Variant("(susssasa{sv}i)",
+                                ("Regolith", replaces, icon, summary, body,
+                                 [], hints, -1)), "(u)")[0]
+    except GLib.Error as err:
+        warn("cannot show the notification: %s" % err.message)
+        return
+    write_int(path, nid)
+
+
+def settings(schema):
+    source = Gio.SettingsSchemaSource.get_default()
+    if source is None or source.lookup(schema, True) is None:
+        warn("the settings schema %s is not installed" % schema)
+        sys.exit(1)
+    return Gio.Settings.new(schema)
+
+
+# ---------------------------------------------------------------- touchpad
+
+def touchpad(action):
+    tp = settings(TOUCHPAD_SCHEMA)
+    current = tp.get_string("send-events")
+    if action == "toggle":
+        value = "disabled" if current == "enabled" else "enabled"
+    else:
+        value = "enabled" if action == "on" else "disabled"
+    if value != current:
+        tp.set_string("send-events", value)
+        Gio.Settings.sync()
+    if value == "enabled":
+        notify("touchpad", "Touchpad on", icon="input-touchpad-symbolic")
+    else:
+        notify("touchpad", "Touchpad off", icon="touchpad-disabled-symbolic")
+
+
+# ------------------------------------------------------------- night light
+
+def night_light():
+    color = settings(NIGHT_LIGHT_SCHEMA)
+    enabled = not color.get_boolean("night-light-enabled")
+    color.set_boolean("night-light-enabled", enabled)
+    Gio.Settings.sync()
+    if enabled:
+        notify("night-light", "Night Light on", icon="night-light-symbolic")
+    else:
+        notify("night-light", "Night Light off",
+               icon="night-light-disabled-symbolic")
+
+
+# ------------------------------------------------------ keyboard backlight
+
+def percent(level, maximum):
+    # Nearest whole percentage, exact halves rounded up.
+    return (200 * level + maximum) // (2 * maximum)
+
+
+def keyboard_backlight(action):
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        maximum = call(bus, UPOWER, KBD_PATH, KBD_IFACE,
+                       "GetMaxBrightness", None, "(i)")[0]
+        level = call(bus, UPOWER, KBD_PATH, KBD_IFACE,
+                     "GetBrightness", None, "(i)")[0]
+    except GLib.Error:
+        return  # no keyboard backlight: nothing to do, nothing to say
+    if maximum <= 0:
+        return
+    level = max(0, min(maximum, level))
+    step = max(1, maximum // 20)
+    memory = os.path.join(state_dir(), "keyboard-backlight.level")
+    if action == "up":
+        value = min(maximum, level + step)
+    elif action == "down":
+        value = max(0, level - step)
+    elif level > 0:
+        write_int(memory, level)
+        value = 0
+    else:
+        value = read_int(memory)
+        if value <= 0 or value > maximum:
+            value = maximum
+    if value != level:
+        try:
+            call(bus, UPOWER, KBD_PATH, KBD_IFACE, "SetBrightness",
+                 GLib.Variant("(i)", (value,)))
+        except GLib.Error as err:
+            warn("cannot set the keyboard backlight: %s" % err.message)
+            return
+    notify("keyboard-backlight",
+           "Keyboard backlight %d%%" % percent(value, maximum),
+           icon="keyboard-brightness-symbolic")
+
+
+# -------------------------------------------------------------- stay awake
+
+def stay_awake():
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    if has_owner(bus, HOLDER_NAME):
+        release_holder(bus)
+        notify("stay-awake", "Stay awake off",
+               "The session can go idle again.",
+               icon="preferences-desktop-screensaver-symbolic")
+        return
+    if has_owner(bus, SESSION_MANAGER) and start_holder():
+        notify("stay-awake", "Stay awake on",
+               "The session does not go idle until the next press.",
+               icon="preferences-desktop-screensaver-symbolic")
+        return
+    notify("stay-awake", "Stay awake unavailable",
+           "The session manager is not running.",
+           icon="dialog-warning-symbolic")
+
+
+def release_holder(bus):
+    try:
+        call(bus, HOLDER_NAME, HOLDER_PATH, HOLDER_NAME, "Release",
+             timeout=5000)
+    except GLib.Error as err:
+        warn("the stay-awake process did not answer (%s); stopping it"
+             % err.message)
+        try:
+            pid = call(bus, DBUS, DBUS_PATH, DBUS,
+                       "GetConnectionUnixProcessID",
+                       GLib.Variant("(s)", (HOLDER_NAME,)), "(u)")[0]
+            os.kill(pid, signal.SIGKILL)
+        except (GLib.Error, OSError):
+            pass
+    # The next press must find it gone.
+    for _ in range(250):
+        try:
+            if not has_owner(bus, HOLDER_NAME):
+                return
+        except GLib.Error:
+            return
+        GLib.usleep(20000)
+
+
+def start_holder():
+    """Start the process holding the inhibitor; True once it holds it."""
+    import select
+    import subprocess
+
+    read_end, write_end = os.pipe()
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(sys.argv[0]), "stay-awake",
+             "--hold"],
+            stdin=subprocess.DEVNULL, stdout=write_end, cwd="/",
+            start_new_session=True, close_fds=True)
+    except OSError as err:
+        warn("cannot start the stay-awake process: %s" % err)
+        os.close(read_end)
+        os.close(write_end)
+        return False
+    os.close(write_end)
+    answer = b""
+    try:
+        while b"\n" not in answer:
+            ready, _, _ = select.select([read_end], [], [], 15)
+            if not ready:
+                break
+            chunk = os.read(read_end, 64)
+            if not chunk:
+                break
+            answer += chunk
+    finally:
+        os.close(read_end)
+    return answer.startswith(b"ready")
+
+
+def hold():
+    """Hold the idle inhibitor until released (the --hold process)."""
+    loop = GLib.MainLoop()
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    # Leaving the session bus (logout) ends the process, and the inhibitor.
+    bus.set_exit_on_close(True)
+    cookie = []
+
+    def release():
+        while cookie:
+            try:
+                call(bus, SESSION_MANAGER, SESSION_MANAGER_PATH,
+                     SESSION_MANAGER, "Uninhibit",
+                     GLib.Variant("(u)", (cookie.pop(),)))
+            except GLib.Error as err:
+                warn("cannot remove the inhibitor: %s" % err.message)
+        try:
+            call(bus, DBUS, DBUS_PATH, DBUS, "ReleaseName",
+                 GLib.Variant("(s)", (HOLDER_NAME,)), "(u)")
+        except GLib.Error:
+            pass
+
+    def method_call(_conn, _sender, _path, _iface, method, _params, invocation):
+        if method == "Release":
+            release()
+            invocation.return_value(None)
+            GLib.idle_add(loop.quit)
+        else:
+            invocation.return_dbus_error(
+                "org.freedesktop.DBus.Error.UnknownMethod", method)
+
+    def stop(*_args):
+        release()
+        loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    def manager_changed(_conn, _sender, _path, _iface, _signal, params):
+        name, _old, new = params.unpack()
+        if name == SESSION_MANAGER and not new:
+            # The session manager is gone, and with it the inhibitor.
+            cookie.clear()
+            stop()
+
+    node = Gio.DBusNodeInfo.new_for_xml(HOLDER_XML)
+    # register_object is deprecated from GLib 2.84 on, in favour of
+    # register_object_with_closures2, which older releases lack.
+    register = getattr(bus, "register_object_with_closures2", None) or \
+        bus.register_object
+    register(HOLDER_PATH, node.interfaces[0], method_call, None, None)
+    owned = call(bus, DBUS, DBUS_PATH, DBUS, "RequestName",
+                 GLib.Variant("(su)", (HOLDER_NAME, 4)), "(u)")[0]
+    if owned != 1:
+        warn("stay awake is already held by another process")
+        return 1
+    bus.signal_subscribe(DBUS, DBUS, "NameOwnerChanged", DBUS_PATH,
+                         SESSION_MANAGER, Gio.DBusSignalFlags.NONE,
+                         manager_changed)
+    try:
+        cookie.append(call(bus, SESSION_MANAGER, SESSION_MANAGER_PATH,
+                           SESSION_MANAGER, "Inhibit",
+                           GLib.Variant("(susu)",
+                                        ("regolith-stay-awake", 0,
+                                         "Stay awake is switched on",
+                                         INHIBIT_IDLE)),
+                           "(u)", timeout=25000)[0])
+    except GLib.Error as err:
+        warn("cannot inhibit idle: %s" % err.message)
+        return 1
+    try:
+        # GLib.unix_signal_add is deprecated where GLibUnix.signal_add exists.
+        import gi
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        signal_add = GLibUnix.signal_add
+    except (ImportError, ValueError, AttributeError):
+        signal_add = GLib.unix_signal_add
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal_add(GLib.PRIORITY_HIGH, signum, stop)
+    os.write(1, b"ready\n")
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1)
+    os.close(devnull)
+    loop.run()
+    return 0
+
+
+# ---------------------------------------------------------------- commands
+
+USAGE = """usage: regolith-quick-toggle stay-awake
+       regolith-quick-toggle touchpad toggle|on|off
+       regolith-quick-toggle night-light
+       regolith-quick-toggle keyboard-backlight up|down|toggle
+"""
+
+COMMANDS = {
+    ("stay-awake",): stay_awake,
+    ("night-light",): night_light,
+    ("touchpad", "toggle"): lambda: touchpad("toggle"),
+    ("touchpad", "on"): lambda: touchpad("on"),
+    ("touchpad", "off"): lambda: touchpad("off"),
+    ("keyboard-backlight", "up"): lambda: keyboard_backlight("up"),
+    ("keyboard-backlight", "down"): lambda: keyboard_backlight("down"),
+    ("keyboard-backlight", "toggle"): lambda: keyboard_backlight("toggle"),
+}
+
+
+def main(argv):
+    args = tuple(argv[1:])
+    if args == ("stay-awake", "--hold"):
+        gio()
+        return hold()
+    command = COMMANDS.get(args)
+    if command is None:
+        sys.stderr.write(USAGE)
+        return 2
+    lock(args[0])
+    gio()
+    try:
+        command()
+    except GLib.Error as err:
+        warn(err.message)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

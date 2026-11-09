@@ -1,0 +1,25 @@
+###############################################################################
+# Quick toggles: stay awake, the touchpad and Night Light
+###############################################################################
+# Each key confirms the new state with a notification (regolith-quick-toggle).
+# The keyboard-backlight keys of the sway session are in 66_keyboard_backlight;
+# in the X11 session gnome-settings-daemon handles them.
+
+## Session // Toggle Stay Awake // <><Ctrl> i ##
+set_from_resource $wm.binding.stay_awake wm.binding.stay_awake Ctrl+i
+bindsym $mod+$wm.binding.stay_awake exec --no-startup-id regolith-quick-toggle stay-awake
+
+## Modify // Toggle Night Light // <><Ctrl> n ##
+set_from_resource $wm.binding.night_light wm.binding.night_light Ctrl+n
+bindsym $mod+$wm.binding.night_light exec --no-startup-id regolith-quick-toggle night-light
+
+## Modify // Toggle Touchpad // <><Ctrl> t ##
+set_from_resource $wm.binding.touchpad wm.binding.touchpad Ctrl+t
+bindsym $mod+$wm.binding.touchpad exec --no-startup-id regolith-quick-toggle touchpad toggle
+
+# The laptop touchpad keys, as GNOME binds them: Ctrl+Super+XF86TouchpadToggle
+# is what many laptops send for their touchpad key.
+bindsym XF86TouchpadToggle exec --no-startup-id regolith-quick-toggle touchpad toggle
+bindsym Ctrl+Mod4+XF86TouchpadToggle exec --no-startup-id regolith-quick-toggle touchpad toggle
+bindsym XF86TouchpadOn exec --no-startup-id regolith-quick-toggle touchpad on
+bindsym XF86TouchpadOff exec --no-startup-id regolith-quick-toggle touchpad off
