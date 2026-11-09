@@ -115,6 +115,7 @@ Architecture: any
 Depends: ${misc:Depends},
   jq,
   regolith-wm-config
+Breaks: regolith-powerd (<< 0.9.0)
 Description: Regolith Desktop sway session keybindings
 
 Package: regolith-wm-resize
