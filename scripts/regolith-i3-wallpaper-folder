@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Show a folder of pictures as the wallpaper in the X11 session, through the
+# org.gnome.desktop.background settings that the desktop draws:
+#
+#   - regolith.wallpaper.file: when it names a folder, one of its pictures;
+#   - regolith.wallpaper.interval: how many seconds each picture stays (a
+#     positive whole number); otherwise one picture for the session;
+#   - regolith.wallpaper.options: the picture-options value (wallpaper when
+#     unset).
+#
+# The settings are left alone for anything else (an image, a GNOME wallpaper
+# XML file, a colour), which the session's look sets up. The pictures are
+# dealt by regolith-wallpaper-cycle, which has them written by this script
+# run with --picture <options> <folder>: it reads the pictures from its
+# standard input, each followed by a NUL byte, writes the three settings of
+# each one at once, and then a newline.
+#
+# i3 runs exec_always lines on restarts but not on reloads, so this script
+# also stays to follow reloads (--follow), and applies the resources again
+# after each one, as sway does by running regolith-set-swaybg.
+
+set -uo pipefail
+
+# write_pictures <options>: write the pictures read from standard input to
+# org.gnome.desktop.background, from one process: picture-uri and
+# picture-uri-dark name the picture, and picture-options is set, together.
+# An empty picture (a folder without pictures) leaves the background as it
+# is, as a missing file does.
+write_pictures() {
+  local program
+  read -r -d '' program <<'EOF'
+import os, sys
+from gi.repository import Gio, GLib
+
+settings = Gio.Settings.new("org.gnome.desktop.background")
+options = GLib.Variant("s", sys.argv[1])
+key = settings.props.settings_schema.get_key("picture-options")
+valid_options = key.range_check(options)
+stdin = sys.stdin.buffer
+pending = b""
+while True:
+    chunk = stdin.read1(4096)
+    if not chunk:
+        break
+    pending += chunk
+    while b"\0" in pending:
+        name, pending = pending.split(b"\0", 1)
+        if name:
+            uri = Gio.File.new_for_path(os.fsdecode(name)).get_uri()
+            # Quotes stay valid, but escaped they keep the stored text plain
+            uri = uri.replace("'", "%27").replace('"', "%22")
+            settings.delay()
+            if valid_options:
+                settings.set_value("picture-options", options)
+            settings.set_string("picture-uri-dark", uri)
+            settings.set_string("picture-uri", uri)
+            settings.apply()
+            Gio.Settings.sync()
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+EOF
+  exec python3 -c "$program" "$1"
+}
+
+# resource <name>: print the value of an X resource, or nothing
+resource() {
+  local line value=
+  while IFS= read -r line; do
+    if [[ $line == "$1:"* ]]; then
+      value=${line#*:}
+      value=${value#"${value%%[![:space:]]*}"}
+    fi
+  done <<< "$resources"
+  printf '%s\n' "$value"
+}
+
+# apply: hand a folder over to regolith-wallpaper-cycle, or stop the rotation
+apply() {
+  local resources wallpaper interval options
+  resources=$(xrdb -query 2> /dev/null)
+  wallpaper=$(resource regolith.wallpaper.file)
+  wallpaper=${wallpaper/#\~/$HOME}
+  if [[ -z $wallpaper || ! -d $wallpaper ]]; then
+    regolith-wallpaper-cycle stop i3
+    return
+  fi
+  interval=$(resource regolith.wallpaper.interval)
+  options=$(resource regolith.wallpaper.options)
+  options=${options:-wallpaper}
+  regolith-wallpaper-cycle folder i3 "$wallpaper" "$interval" "$options" \
+    "$BASH" "$self" --picture "$options" "$wallpaper"
+}
+
+# follow: apply after every reload, for as long as i3 runs. One follower per
+# session: a second one leaves at once.
+follow() {
+  local dir=${XDG_RUNTIME_DIR:-/tmp/regolith-wallpaper-$UID}/regolith-wallpaper
+  local sock pid= comm= event
+  mkdir -p -m 700 "$dir" || return 1
+  exec {lock_fd}>> "$dir/i3-follow.lock" || return 1
+  flock -n "$lock_fd" || return 0
+  sock=${I3SOCK:-$(i3 --get-socketpath 2> /dev/null)}
+  [[ -n $sock ]] || return 0
+  if [[ ${sock##*/} =~ \.([0-9]+)$ ]]; then
+    read -r comm 2> /dev/null < "/proc/${BASH_REMATCH[1]}/comm"
+    [[ $comm == i3 ]] && pid=${BASH_REMATCH[1]}
+  fi
+  # i3 drops the subscription when it restarts in place; subscribe again
+  # while it runs
+  while if [[ -n $pid ]]; then kill -0 "$pid" 2> /dev/null; else [[ -S $sock ]]; fi; do
+    while IFS= read -r event; do
+      if [[ $event =~ \"change\":[[:space:]]*\"reload\" ]]; then
+        apply {lock_fd}>&-
+      fi
+    done < <(i3-msg -s "$sock" -t subscribe -m '["workspace"]' 2> /dev/null)
+    sleep 0.5
+  done
+}
+
+self=${BASH_SOURCE[0]}
+[[ $self == /* ]] || self=$PWD/$self
+
+case ${1-} in
+  --picture)
+    write_pictures "${2-}"
+    ;;
+  --follow)
+    follow
+    ;;
+  *)
+    apply
+    "$BASH" "$self" --follow < /dev/null > /dev/null 2>&1 &
+    ;;
+esac

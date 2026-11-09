@@ -1,0 +1,470 @@
+#!/usr/bin/env bash
+# Keep a wallpaper that moves: the pictures of a folder, or a GNOME slideshow.
+# regolith-set-swaybg (sway) and regolith-i3-wallpaper-folder (i3) run it, each
+# with the command that draws pictures in its session: the command reads
+# pictures from its standard input, each followed by a NUL byte, and writes a
+# newline once each one is drawn. A rotation keeps one such command running.
+#
+#   regolith-wallpaper-cycle folder <session> <folder> <interval> <settings> <command...>
+#   regolith-wallpaper-cycle slideshow <session> <file> <settings> <command...>
+#   regolith-wallpaper-cycle stop <session>
+#
+# A folder is a shuffled pack of its pictures: the files directly in it,
+# or links to files, whose names end in .png, .jpg, .jpeg, .webp or .svg in
+# any case and don't start with a dot. The pack is dealt out completely before
+# it is shuffled again, and no picture comes up twice running. The first card
+# stays for the session, unless the interval is a positive whole number of
+# seconds: then the next card is shown every interval. The folder is read
+# again for every card. When it holds no pictures, the command gets an empty
+# picture. The changes keep to the rotation's own timetable, counted from
+# its start, however long a drawing takes.
+#
+# A slideshow (root element <background>) shows the picture GNOME shows at
+# each moment: its clock starts at <starttime>, in local time, walks through
+# the <static> and <transition> entries for their durations and starts over.
+# A transition switches from its <from> to its <to> picture halfway through.
+#
+# A session has at most one rotation, which ends with its window manager.
+# <settings> stands for everything that decides what is drawn. When it is
+# the same as for the running rotation, as after a reload, that rotation and
+# its timetable are kept and its picture is drawn again. Any other run, and
+# "stop", end the running rotation first: it never draws again.
+
+set -uo pipefail
+
+# The longest nap, in microseconds, between looks at the window manager
+NAP_MAX=250000
+
+warn() {
+  echo "regolith-wallpaper-cycle: $*" >&2
+}
+
+# now: set "now" to the time in microseconds since the epoch, from bash
+# itself: no file to read, no process to start
+now() {
+  now=${EPOCHREALTIME/[.,]/}
+}
+
+# --- state, shared by the runs of one session -----------------------------
+
+open_state() {
+  local dir=${XDG_RUNTIME_DIR:-/tmp/regolith-wallpaper-$UID}/regolith-wallpaper
+  mkdir -p -m 700 "$dir" || return 1
+  state_file=$dir/$session.state
+  exec {lock_fd}>> "$dir/$session.lock" || return 1
+}
+
+lock() {
+  flock "$lock_fd"
+}
+
+unlock() {
+  flock -u "$lock_fd"
+}
+
+# Fields: rotation token, settings, rotation pid, picture shown when there
+# is no rotation process. Only runs write it, with the lock held.
+read_state() {
+  state=()
+  [[ -s $state_file ]] && mapfile -t -d '' state < "$state_file"
+  state_token=${state[0]-} state_settings=${state[1]-}
+  state_pid=${state[2]-} state_picture=${state[3]-}
+}
+
+write_state() {
+  printf '%s\0' "$token" "$settings" "${1-}" "$current" > "$state_file"
+}
+
+# worker_alive <pid>: the rotation process is still running
+worker_alive() {
+  local args=() arg stat=
+  [[ $1 =~ ^[0-9]+$ ]] && kill -0 "$1" 2> /dev/null || return 1
+  mapfile -t -d '' args 2> /dev/null < "/proc/$1/cmdline"
+  if (( ${#args[@]} > 0 )); then
+    for arg in "${args[@]}"; do
+      [[ $arg == */regolith-wallpaper-cycle || $arg == regolith-wallpaper-cycle ]] && return 0
+    done
+    return 1
+  fi
+  # No command line: a zombie that nobody has reaped yet, or a /proc that
+  # can't be read, in which case the process is taken to be alive
+  read -r stat 2> /dev/null < "/proc/$1/stat"
+  [[ ${stat##*) } != Z* ]]
+}
+
+# end_rotation: stop the running rotation. It finishes a drawing it has
+# started, and is gone before this returns, so it never draws again.
+end_rotation() {
+  local i
+  [[ -n $state_pid ]] && worker_alive "$state_pid" || return 0
+  kill -TERM "$state_pid" 2> /dev/null
+  for (( i = 0; i < 60; i++ )); do
+    worker_alive "$state_pid" || return 0
+    sleep 0.05
+  done
+  # It is its own process group, with its drawing command
+  kill -KILL -- "-$state_pid" "$state_pid" 2> /dev/null
+}
+
+stop() {
+  local dir=${XDG_RUNTIME_DIR:-/tmp/regolith-wallpaper-$UID}/regolith-wallpaper
+  [[ -e $dir/$session.state ]] || return 0
+  open_state || return 1
+  lock
+  read_state
+  end_rotation
+  rm -f "$state_file"
+  unlock
+}
+
+# --- the window manager ---------------------------------------------------
+
+# find_wm: set wm_sock (its IPC socket) and wm_pid (its process, when the
+# socket name tells it)
+find_wm() {
+  wm_sock= wm_pid=
+  case $session in
+    sway) wm_sock=${SWAYSOCK-} ;;
+    i3) wm_sock=${I3SOCK-}
+      [[ -n $wm_sock ]] || wm_sock=$(i3 --get-socketpath 2> /dev/null) ;;
+  esac
+  [[ -n $wm_sock && -S $wm_sock ]] || { wm_sock=; return 1; }
+  # sway-ipc.<uid>.<pid>.sock, i3/ipc-socket.<pid>
+  if [[ ${wm_sock##*/} =~ \.([0-9]+)(\.sock)?$ ]]; then
+    local comm=
+    read -r comm 2> /dev/null < "/proc/${BASH_REMATCH[1]}/comm"
+    [[ $comm == "$session" ]] && wm_pid=${BASH_REMATCH[1]}
+  fi
+  return 0
+}
+
+wm_alive() {
+  if [[ -n $wm_pid ]]; then
+    kill -0 "$wm_pid" 2> /dev/null
+  else
+    [[ -S $wm_sock ]]
+  fi
+}
+
+# --- drawing --------------------------------------------------------------
+
+# draw_once <picture>: draw it with a command of its own
+draw_once() {
+  drawn=1 current=$1
+  printf '%s\0' "$current" | "${command[@]}" > /dev/null
+}
+
+# draw <picture>: draw it with the rotation's command, unless it is already
+# shown, and wait until it is drawn
+draw() {
+  local fd
+  (( drawn )) && [[ $1 == "$current" ]] && return 0
+  drawn=1 current=$1
+  if [[ -z ${drawer_PID-} ]] || ! kill -0 "$drawer_PID" 2> /dev/null; then
+    coproc drawer { "${command[@]}"; }
+  fi
+  fd=${drawer[1]-}
+  [[ -n $fd ]] && printf '%s\0' "$current" >&"$fd" 2> /dev/null || return 1
+  # A newline when it is drawn; nothing if the command is gone
+  fd=${drawer[0]-}
+  [[ -n $fd ]] && read -r -u "$fd" _
+}
+
+# nap <microseconds>: wait, without starting a process
+nap() {
+  local us=$1
+  (( us > NAP_MAX )) && us=$NAP_MAX
+  (( us < 10000 )) && us=10000
+  printf -v us '%d.%06d' $(( us / 1000000 )) $(( us % 1000000 ))
+  if [[ -n $nap_fd ]]; then
+    read -r -t "$us" -u "$nap_fd"
+    # More than 128 is the timeout; anything else, and sleep from now on
+    (( $? > 128 )) && return
+    warn "cannot wait on a pipe; using sleep"
+    nap_fd=
+  fi
+  sleep "$us"
+}
+
+# rotate <next>: the rotation process. <next> sets "card" and "due" (the
+# time of the next change); the card is drawn from then on, for as long as
+# the window manager runs. SIGUSR1 draws the current picture again, SIGTERM
+# ends the rotation once a drawing in progress is done.
+rotate() {
+  local next=$1 stopping=0 redraw=0 fd
+  set +m
+  exec {lock_fd}>&-
+  exec {nap_fd}<> <(:) || nap_fd=
+  trap 'stopping=1' TERM
+  trap 'redraw=1' USR1
+  while (( ! stopping )) && wm_alive; do
+    if (( redraw )); then
+      redraw=0 drawn=0
+      draw "$current"
+    fi
+    now
+    if (( now >= due )); then
+      "$next"
+      draw "$card" || warn "could not draw '$card'"
+      now
+    fi
+    (( stopping )) || nap $(( due - now ))
+  done
+  # Let the drawing command finish and leave
+  fd=${drawer[1]-}
+  if [[ -n $fd ]]; then
+    exec {fd}>&-
+    wait "$drawer_PID" 2> /dev/null
+  fi
+  exit 0
+}
+
+# --- folders --------------------------------------------------------------
+
+# list_pictures: set "pictures" to the pictures in $folder
+list_pictures() {
+  local path name
+  pictures=()
+  for path in "$folder"/*; do
+    name=${path##*/}
+    case ${name,,} in
+      *.png | *.jpg | *.jpeg | *.webp | *.svg) ;;
+      *) continue ;;
+    esac
+    # An ordinary file, or a link to one; not a folder, pipe or broken link
+    [[ -f $path ]] && pictures+=("$path")
+  done
+}
+
+random() {
+  random=$(( ${SRANDOM:-$(( RANDOM << 15 | RANDOM ))} % $1 ))
+}
+
+# shuffle: a new deal, from the pictures in $folder
+shuffle() {
+  local i tmp
+  list_pictures
+  deal=("${pictures[@]}")
+  for (( i = ${#deal[@]} - 1; i > 0; i-- )); do
+    random $(( i + 1 ))
+    tmp=${deal[i]} deal[i]=${deal[random]} deal[random]=$tmp
+  done
+  # Not twice running, at the join between two deals either
+  if (( ${#deal[@]} > 1 )) && [[ ${deal[0]} == "$current" ]]; then
+    random $(( ${#deal[@]} - 1 ))
+    tmp=${deal[0]} deal[0]=${deal[random + 1]} deal[random + 1]=$tmp
+  fi
+}
+
+# next_card: the next card of the deal that is still in the folder, or the
+# first of a new deal
+next_card() {
+  local -A present=()
+  local path rest=()
+  list_pictures
+  for path in "${pictures[@]}"; do
+    present[$path]=1
+  done
+  for path in "${deal[@]}"; do
+    [[ -n ${present[$path]-} ]] && rest+=("$path")
+  done
+  deal=("${rest[@]}")
+  (( ${#deal[@]} > 0 )) || shuffle
+  card=${deal[0]-}
+  deal=("${deal[@]:1}")
+  # The next change keeps to the timetable; changes missed altogether (as
+  # across a suspend) are skipped, and a clock set back starts it again
+  due=$(( due + interval ))
+  while (( due <= now )); do
+    due=$(( due + interval ))
+  done
+  (( due - now <= interval )) || due=$(( now + interval ))
+}
+
+# --- slideshows -----------------------------------------------------------
+
+# parse_slideshow: read $file into "start" (microseconds since the epoch),
+# "total" (the length of one round) and one entry per <static> or
+# <transition>: kinds, lengths (microseconds), froms and tos
+parse_slideshow() {
+  local kind length from to
+  kinds=() lengths=() froms=() tos=() start= total=0
+  { read -r -d '' start || return 1
+    while read -r -d '' kind && read -r -d '' length && read -r -d '' from && read -r -d '' to; do
+      kinds+=("$kind") lengths+=("$length") froms+=("$from") tos+=("$to")
+      total=$(( total + length ))
+    done
+  } < <(python3 - "$file" <<'EOF'
+import sys, time
+import xml.etree.ElementTree as ET
+
+def picture(element):
+    # A file name, or sizes of it of which the last is taken
+    if element is None:
+        return ""
+    sizes = element.findall("size")
+    text = sizes[-1].text if sizes else element.text
+    return (text or "").strip()
+
+def number(element, name):
+    try:
+        return float(element.findtext(name) or 0)
+    except ValueError:
+        return 0.0
+
+root = ET.parse(sys.argv[1]).getroot()
+when = root.find("starttime")
+start = 0.0
+if when is not None:
+    fields = [int(number(when, name)) for name in ("year", "month", "day", "hour", "minute")]
+    try:
+        start = time.mktime((*fields, 0, 0, 0, -1)) + number(when, "second")
+    except (OverflowError, ValueError):
+        pass
+out = ["%d" % round(start * 1e6)]
+for entry in root:
+    length = max(0, round(number(entry, "duration") * 1e6))
+    if entry.tag == "static":
+        out += ["static", "%d" % length, picture(entry.find("file")), ""]
+    elif entry.tag == "transition":
+        out += ["transition", "%d" % length, picture(entry.find("from")), picture(entry.find("to"))]
+sys.stdout.write("".join(field + "\0" for field in out))
+EOF
+  )
+  (( ${#kinds[@]} > 0 ))
+}
+
+# slide: set "card" to the slideshow's picture at $now, and "due" to the time
+# it changes
+slide() {
+  local offset round i length
+  if (( now < start || total <= 0 )); then
+    card=${froms[0]}
+    due=$start
+    (( total > 0 && due > now )) || due=$(( now + NAP_MAX ))
+    return
+  fi
+  offset=$(( (now - start) % total ))
+  round=$(( now - offset ))
+  for (( i = 0; i < ${#kinds[@]}; i++ )); do
+    length=${lengths[i]}
+    if (( offset < length )); then
+      if [[ ${kinds[i]} == static ]]; then
+        card=${froms[i]} due=$(( round + length ))
+      elif (( offset < length / 2 )); then
+        card=${froms[i]} due=$(( round + length / 2 ))
+      else
+        card=${tos[i]} due=$(( round + length ))
+      fi
+      return
+    fi
+    offset=$(( offset - length ))
+    round=$(( round + length ))
+  done
+}
+
+next_slide() {
+  now
+  slide
+}
+
+# --- runs -----------------------------------------------------------------
+
+# keep: the same settings as the running rotation: draw its picture again
+keep() {
+  [[ -n $state_token && $state_settings == "$settings" ]] || return 1
+  if [[ -n $state_pid ]]; then
+    worker_alive "$state_pid" || return 1
+    kill -USR1 "$state_pid"
+    return 0
+  elif [[ -n $wm_sock ]] && (( rotating )); then
+    return 1
+  fi
+  [[ -z $state_picture || -e $state_picture ]] || return 1
+  draw_once "$state_picture"
+  return 0
+}
+
+cmd=${1-} session=${2-}
+case $session in
+  sway | i3) ;;
+  *) echo "usage: regolith-wallpaper-cycle folder|slideshow|stop sway|i3 ..." >&2; exit 2 ;;
+esac
+
+case $cmd in
+  stop)
+    stop
+    exit
+    ;;
+  folder)
+    folder=${3-} interval=${4-} settings=${5-}
+    shift 5 || exit 2
+    [[ $folder == / ]] || folder=${folder%"${folder##*[!/]}"}
+    if [[ $interval =~ ^[[:space:]]*([0-9]{1,9})[[:space:]]*$ ]] && (( 10#${BASH_REMATCH[1]} > 0 )); then
+      interval=$(( 10#${BASH_REMATCH[1]} * 1000000 ))
+    else
+      interval=0
+    fi
+    rotating=$(( interval > 0 ))
+    settings+=$'\n'"folder $folder $interval"
+    ;;
+  slideshow)
+    file=${3-} settings=${4-}
+    shift 4 || exit 2
+    rotating=1
+    settings+=$'\n'"slideshow $file $(stat -L -c '%Y %s' -- "$file" 2> /dev/null)"
+    ;;
+  *)
+    echo "usage: regolith-wallpaper-cycle folder|slideshow|stop sway|i3 ..." >&2
+    exit 2
+    ;;
+esac
+command=("$@")
+(( ${#command[@]} > 0 )) || exit 2
+
+find_wm
+settings+=$'\n'"wm $wm_sock"
+open_state || exit 1
+lock
+read_state
+if keep; then
+  exit 0
+fi
+end_rotation
+token=$$.$EPOCHREALTIME.${SRANDOM:-$RANDOM}
+drawn=0 current=
+now
+if [[ $cmd == folder ]]; then
+  deal=()
+  shuffle
+  card=${deal[0]-}
+  deal=("${deal[@]:1}")
+  draw_once "$card"
+  now
+  due=$(( now + interval ))
+  next=next_card
+else
+  if ! parse_slideshow; then
+    warn "no pictures in '$file'"
+    rotating=0
+    kinds=(static) lengths=(0) froms=("") tos=("") start=0 total=0
+  fi
+  slide
+  draw_once "$card"
+  next=next_slide
+fi
+
+# Without a window manager to follow (or without an interval), the picture
+# stays as it is
+pid=
+if (( rotating )) && [[ -n $wm_sock ]]; then
+  # A process group of its own, for its drawing command too; its messages go
+  # to a log next to the state
+  set -m
+  rotate "$next" < /dev/null > /dev/null 2> "${state_file%.state}.log" &
+  pid=$!
+  set +m
+fi
+write_state "$pid"
+unlock
+exit 0

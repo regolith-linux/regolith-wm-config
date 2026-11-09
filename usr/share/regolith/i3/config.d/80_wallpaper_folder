@@ -1,0 +1,3 @@
+# A folder of pictures as the wallpaper: regolith.wallpaper.file names the
+# folder, and regolith.wallpaper.interval how many seconds each picture stays
+exec_always --no-startup-id /usr/bin/regolith-i3-wallpaper-folder

@@ -198,10 +198,12 @@ expect 'XML: largest size on all outputs' "output * background $WORK/large.png f
 expect 'XML: exact size on the output' "output \"Virtual-1\" background $WORK/small.png fill #ff0000"
 
 # A GNOME slideshow as Ubuntu ships it (<file>, no sizes): its first image
+# while its start time is still to come (later on the picture follows the
+# slideshow's clock)
 cat > "$WORK/slideshow.xml" <<EOF
 <background>
   <starttime>
-    <year>2009</year><month>08</month><day>04</day>
+    <year>2099</year><month>08</month><day>04</day>
     <hour>00</hour><minute>00</minute><second>00</second>
   </starttime>
   <static>
@@ -318,9 +320,9 @@ run "regolith.wallpaper.file: $WORK/dark wall.png"
 expect 'pair, dark picture set, Default style: light picture' "output * background $WORK/light.png fill #000000"
 pair prefer-dark
 run "regolith.wallpaper.file: $WORK/light.png"
-expect 'pair, Dark style: dark picture' "output * background $WORK/dark wall.png fill #000000"
+expect 'pair, Dark style: dark picture' "output * background $WORK/dark\ wall.png fill #000000"
 run 'regolith.wallpaper.file: ~/light.png'
-expect 'pair, path under ~, Dark style: dark picture' "output * background $WORK/dark wall.png fill #000000"
+expect 'pair, path under ~, Dark style: dark picture' "output * background $WORK/dark\ wall.png fill #000000"
 run "regolith.wallpaper.file: $WORK/wall.png"
 expect 'not a picture of the pair: drawn as it is' "output * background $WORK/wall.png fill #000000"
 # The same picture for both styles, as a look sets it: drawn as it is
@@ -334,7 +336,7 @@ pair prefer-dark
 SCRIPT_ARGS=(--follow-style)
 run "regolith.wallpaper.file: $WORK/light.png"
 SCRIPT_ARGS=()
-if [ "$(grep -cxF "output * background $WORK/dark wall.png fill #000000" "$STUB_LOG")" = 2 ]; then
+if [ "$(grep -cxF "output * background $WORK/dark\ wall.png fill #000000" "$STUB_LOG")" = 2 ]; then
     echo "ok   --follow-style: drawn on each change"
 else
     echo "FAIL --follow-style: drawn on each change:" >&2
