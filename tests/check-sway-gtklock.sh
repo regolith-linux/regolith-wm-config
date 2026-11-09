@@ -53,6 +53,7 @@ printf '#!/bin/sh\necho "[systemctl $*]" >> "$STUB_LOG"\n' > "$WORK/bin/systemct
 chmod +x "$WORK/bin/"*
 
 export STUB_RESOURCES=$WORK/resources STUB_LOG=$WORK/log HOME=$WORK/home
+unset XDG_CONFIG_HOME
 # The lid close script without regolith-sway-gtklock (the package isn't
 # installed)
 ln -s "$SCRIPTS/regolith-sway-clamshell" "$WORK/no-gtklock/"
@@ -107,6 +108,26 @@ run regolith-sway-gtklock 'regolith.lockscreen.wallpaper.file:'
 expect 'no wallpaper: locks without an image' --
 run 'regolith-sway-gtklock -d' "regolith.lockscreen.wallpaper.file: $SPACE"
 expect 'arguments go to gtklock' '[-d]' '[--background]' "[$SPACE]" --
+
+# The look's gtklock stylesheet, unless the user has one of their own
+: > "$WORK/my pictures/look style.css"
+STYLE="$WORK/my pictures/look style.css"
+run regolith-sway-gtklock "gtklock.stylesheet: $STYLE" "regolith.lockscreen.wallpaper.file: $SPACE"
+expect 'look stylesheet' '[--style]' "[$STYLE]" '[--background]' "[$SPACE]" --
+run 'regolith-sway-gtklock -d' "gtklock.stylesheet: $STYLE"
+expect 'look stylesheet, arguments' '[-d]' '[--style]' "[$STYLE]" --
+run regolith-sway-gtklock 'gtklock.stylesheet: /nonexistent/style.css'
+expect 'missing stylesheet: locks without it' --
+expect_warning 'missing stylesheet: warning' "no such file: '/nonexistent/style.css'"
+mkdir -p "$WORK/home/.config/gtklock"
+printf '[main]\nstyle = /tmp/mine.css\n' > "$WORK/home/.config/gtklock/config.ini"
+run regolith-sway-gtklock "gtklock.stylesheet: $STYLE"
+expect "user's config.ini style: look stylesheet not used" --
+rm "$WORK/home/.config/gtklock/config.ini"
+: > "$WORK/home/.config/gtklock/style.css"
+run regolith-sway-gtklock "gtklock.stylesheet: $STYLE"
+expect "user's style.css: look stylesheet not used" --
+rm -r "$WORK/home/.config/gtklock"
 
 # Lid close, one display, on AC: lock, and lock before suspending
 run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: LOCK' \
