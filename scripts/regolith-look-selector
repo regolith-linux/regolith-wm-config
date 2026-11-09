@@ -2,7 +2,12 @@
 # Pick a look from a list and switch to it. Arguments are passed on to ilia;
 # the look selector key passes the look's stylesheet (-t $ilia.stylesheet).
 
-ICON=$(xrescat ilia.look-selector.icon applications-other)
+# The sway session keeps the resources in trawl, the X11 session in Xresources
+if [ "${XDG_SESSION_TYPE-}" == "wayland" ]; then
+    ICON=$(trawlcat ilia.look-selector.icon applications-other)
+else
+    ICON=$(xrescat ilia.look-selector.icon applications-other)
+fi
 
 new_look=$(/usr/bin/regolith-look list | ilia -p textlist -l "Look Selector" -i "$ICON" "$@")
 
