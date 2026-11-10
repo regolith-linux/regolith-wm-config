@@ -1,54 +1,171 @@
-#!/bin/sh
-# Lock the sway session with gtklock, showing the lock-screen wallpaper
-# (regolith.lockscreen.wallpaper.file), as the X11 lock screen does.
+#!/usr/bin/env bash
+# Lock the sway session with gtklock, showing the look's lock-screen
+# background, as the X11 lock screen does (the look loader sets it in
+# org.gnome.desktop.screensaver there):
 #
-# This script is for gtklock only (--background is gtklock's option). It is
-# the default of wm.program.lock_sway, set in 42_gtklock, and of the lid
-# close script's lock, and it ships with that partial in the
+#   - regolith.lockscreen.wallpaper.file: an image, placed as
+#     regolith.lockscreen.wallpaper.options says (a GNOME picture-options
+#     value: wallpaper, centered, scaled, stretched, zoom or spanned; zoom
+#     when unset, as regolith-set-swaybg does for the desktop). With none,
+#     the image isn't shown, as in X11;
+#   - regolith.lockscreen.wallpaper.color.primary, .color.secondary and
+#     .color.shading.type (solid, vertical or horizontal): the background
+#     when there is no image. The primary colour also fills what an image
+#     leaves uncovered. Colours can be anything GNOME accepts: #RGB,
+#     #RRGGBB, #RRRGGGBBB, #RRRRGGGGBBBB, rgb(), rgba() or a colour name.
+#
+# This script is for gtklock only (--background and --style are gtklock's
+# options). It is the default of wm.program.lock_sway, set in 42_gtklock,
+# and of the lid close script's lock, and it ships with that partial in the
 # regolith-sway-gtklock package. To use another lock application, set
 # wm.program.lock_sway to its command; support for another locker belongs in
 # its own script and package, next to this one.
 #
-# The path goes to gtklock as a single argument, so it may contain spaces,
-# and a leading ~ is expanded to the home directory. When the resource is
-# unset or the file doesn't exist, gtklock still starts, just without the
-# image: a wallpaper setting must never keep the session from locking.
+# The image goes to gtklock with --background, as a single argument, so its
+# path may contain spaces, and a leading ~ is expanded to the home
+# directory. When the resource is unset or the file doesn't exist, gtklock
+# still starts, with the colours: a wallpaper setting must never keep the
+# session from locking.
 #
-# A look can style the lock screen with a gtklock stylesheet, named by the
-# gtklock.stylesheet resource (as ilia.stylesheet styles the launcher), for
-# example to keep the clock readable over its wallpaper. It is not used when
-# the user has a gtklock stylesheet of their own (gtklock's style.css, or a
-# style set in its config.ini).
+# gtklock always stretches that image, and it has no option for a colour,
+# so the placement and the colours go to it as a stylesheet, written to
+# $XDG_RUNTIME_DIR/regolith-sway-gtklock.css. The stylesheet also puts the
+# clock and the password prompt on a panel in the GTK theme's colours, as
+# the X11 unlock dialog is, so that they stay readable over any background.
+#
+# A look can style the lock screen further with a gtklock stylesheet, named
+# by the gtklock.stylesheet resource (as ilia.stylesheet styles the
+# launcher), for example to keep the clock readable over its wallpaper. It
+# is imported after the background rules, so its own rules win. Neither is
+# used when the user has a gtklock stylesheet of their own (gtklock's
+# style.css, or a style set in its config.ini): that stylesheet alone styles
+# the lock screen, and only the image is passed on.
 #
 # Arguments are passed on to gtklock (for example -d, to return once the
 # session is locked).
 
-wallpaper=$(trawlcat regolith.lockscreen.wallpaper.file "" 2> /dev/null)
+warn() {
+  echo "regolith-sway-gtklock: $*" >&2
+}
+
+resource() {
+  trawlcat "$1" "" 2> /dev/null
+}
+
+# to_hex, shared with regolith-set-swaybg: the copy next to this script is
+# preferred, as when it runs from the source tree. Without it the colours
+# are left out, but the session still locks.
+colour_lib=${BASH_SOURCE[0]%/*}/regolith-wm-colour.sh
+[[ -f $colour_lib ]] || colour_lib=/usr/lib/regolith/regolith-wm-colour.sh
+# shellcheck source=scripts/regolith-wm-colour.sh
+if ! source "$colour_lib" 2> /dev/null; then
+  warn "$colour_lib is missing: the look's colours are not shown"
+  to_hex() { return 1; }
+fi
+
+# The panel behind the clock and the password prompt
+PANEL_CSS='#window-box {
+  background-color: @theme_bg_color;
+  border-radius: 10px;
+  padding: 24px 36px;
+}'
+
+# background_css: print gtklock's window rules for the lock-screen
+# background, or nothing. With an image ($wallpaper, which gtklock draws)
+# they place it; without one they draw the colours.
+background_css() {
+  local color second image=none
+  if [[ -n $primary ]] && ! color=$(to_hex "$primary"); then
+    warn "regolith.lockscreen.wallpaper.color.primary: not a colour: '$primary'"
+    color=
+  fi
+
+  if [[ -n $wallpaper ]]; then
+    local size=cover repeat=no-repeat position=center
+    case $options in
+      wallpaper) size=auto repeat=repeat position="left top" ;;
+      centered) size=auto ;;
+      scaled) size=contain ;;
+      stretched) size="100% 100%" ;;
+    esac
+    printf 'window {\n'
+    [[ -z $color ]] || printf '  background-color: %s;\n' "$color"
+    printf '  background-size: %s;\n  background-repeat: %s;\n  background-position: %s;\n}\n' \
+      "$size" "$repeat" "$position"
+    return
+  fi
+
+  [[ -n $color ]] || return
+  if [[ -n $secondary && ( $shading == vertical || $shading == horizontal ) ]]; then
+    if second=$(to_hex "$secondary"); then
+      local direction=bottom
+      [[ $shading == horizontal ]] && direction=right
+      image="linear-gradient(to $direction, $color, $second)"
+    else
+      warn "regolith.lockscreen.wallpaper.color.secondary: not a colour: '$secondary'"
+    fi
+  fi
+  printf 'window {\n  background-color: %s;\n  background-image: %s;\n}\n' "$color" "$image"
+}
+
+# write_style <css> [<stylesheet>]: write the css, followed by an import of
+# the stylesheet, to the file for gtklock's --style, and print its name
+write_style() {
+  local file=${XDG_RUNTIME_DIR:-/tmp}/regolith-sway-gtklock.css tmp import=${2-}
+  tmp=$(mktemp "$file.XXXXXX") || return 1
+  if [[ -n $import ]]; then
+    [[ $import == /* ]] || import=$PWD/$import
+    # As a CSS string: backslashes and quotes escaped
+    import=${import//\\/\\\\}
+    import=${import//\"/\\\"}
+    printf -v import '@import url("%s");\n' "$import"
+  fi
+  if ! printf '%s\n%s' "$1" "$import" > "$tmp" || ! mv -f "$tmp" "$file"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$file"
+}
+
+wallpaper=$(resource regolith.lockscreen.wallpaper.file)
+options=$(resource regolith.lockscreen.wallpaper.options)
+primary=$(resource regolith.lockscreen.wallpaper.color.primary)
+secondary=$(resource regolith.lockscreen.wallpaper.color.secondary)
+shading=$(resource regolith.lockscreen.wallpaper.color.shading.type)
+
 # shellcheck disable=SC2088 # the resource holds a literal ~
 case $wallpaper in
   "~/"*) wallpaper=$HOME/${wallpaper#"~/"} ;;
 esac
+if [[ $options == none ]]; then
+  wallpaper=
+elif [[ -n $wallpaper && ! -f $wallpaper ]]; then
+  warn "regolith.lockscreen.wallpaper.file: no such file: '$wallpaper'"
+  wallpaper=
+fi
 
 gtklock_config=${XDG_CONFIG_HOME:-$HOME/.config}/gtklock
-stylesheet=$(trawlcat gtklock.stylesheet "" 2> /dev/null)
-if [ -n "$stylesheet" ]; then
-  if [ -f "$gtklock_config/style.css" ] ||
-     grep -qs '^[[:space:]]*style[[:space:]]*=' "$gtklock_config/config.ini"; then
-    stylesheet=
-  elif [ ! -f "$stylesheet" ]; then
-    echo "regolith-sway-gtklock: gtklock.stylesheet: no such file: '$stylesheet'" >&2
+if [[ ! -f $gtklock_config/style.css ]] &&
+   ! grep -qs '^[[:space:]]*style[[:space:]]*=' "$gtklock_config/config.ini"; then
+  stylesheet=$(resource gtklock.stylesheet)
+  if [[ -n $stylesheet && ! -f $stylesheet ]]; then
+    warn "gtklock.stylesheet: no such file: '$stylesheet'"
     stylesheet=
   fi
-fi
-if [ -n "$stylesheet" ]; then
-  set -- "$@" --style "$stylesheet"
+  style=$stylesheet
+  background=$(background_css)
+  if [[ -n $background ]]; then
+    style=$(write_style "$background"$'\n'"$PANEL_CSS" "$stylesheet") || {
+      warn "can't write the stylesheet: the lock-screen background is left to gtklock"
+      style=$stylesheet
+    }
+  fi
+  if [[ -n $style ]]; then
+    set -- "$@" --style "$style"
+  fi
 fi
 
-if [ -n "$wallpaper" ] && [ -f "$wallpaper" ]; then
-  exec gtklock "$@" --background "$wallpaper"
-fi
-
-if [ -n "$wallpaper" ]; then
-  echo "regolith-sway-gtklock: regolith.lockscreen.wallpaper.file: no such file: '$wallpaper'" >&2
+if [[ -n $wallpaper ]]; then
+  set -- "$@" --background "$wallpaper"
 fi
 exec gtklock "$@"

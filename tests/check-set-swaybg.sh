@@ -77,7 +77,7 @@ TWO_OUTPUTS='[{"name":"Virtual-1","active":true,"scale":1.0,"rect":{"x":0,"y":0,
 export STUB_RESOURCES=$WORK/resources STUB_LOG=$WORK/log STUB_OUTPUTS=$ONE_OUTPUT
 export STUB_GSETTINGS=$WORK/gsettings
 : > "$STUB_GSETTINGS"
-export REGOLITH_SWAYBG_RGB_TXT=$WORK/rgb.txt XDG_RUNTIME_DIR=$WORK/run HOME=$WORK
+export REGOLITH_RGB_TXT=$WORK/rgb.txt XDG_RUNTIME_DIR=$WORK/run HOME=$WORK
 export WORK STUB_SWAY_EXIT=$WORK/sway-exited SWAYSOCK=$WORK/run/sway-ipc.1000.100.sock
 
 # run <resources...>: run the script with these resources (and the arguments

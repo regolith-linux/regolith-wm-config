@@ -405,7 +405,7 @@ Depends: ${misc:Depends},
     python3,
     trawlcat,
     regolith-wallpaper-cycle,
-    regolith-wm-config,
+    regolith-wm-config (= ${binary:Version}),
     x11-common
 Description: Draw the Regolith wallpaper in sway
  Sets the sway background from the regolith.wallpaper Xresources: an image,
@@ -457,7 +457,8 @@ Architecture: any
 Depends: ${misc:Depends},
     gtklock,
     trawlcat,
-    regolith-wm-config,
+    regolith-wm-config (= ${binary:Version}),
+    x11-common
 Description: Configuration for using gtklock as the default locker
 
 Package: regolith-sway-audio-idle-inhibit
