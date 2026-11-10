@@ -291,19 +291,25 @@ Package: regolith-i3-next-workspace
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  i3-next-workspace
+  childe (>= 0.1.5)
 Replaces: regolith-wm-next-workspace
 Conflicts: regolith-wm-next-workspace
 Description: easy i3 workspace creation
  Automatically determine unused workspace to move to.
+ .
+ With the Xresource wm.workspace.app_names set to yes, also names
+ each workspace after the apps on it.
 
 Package: regolith-sway-next-workspace
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
-  childe
+  childe (>= 0.1.5)
 Description: easy Sway workspace creation
  Automatically determine unused workspace to move to.
+ .
+ With the Xresource wm.workspace.app_names set to yes, also names
+ each workspace after the apps on it.
 
 Package: regolith-wm-swap-focus
 Architecture: any
