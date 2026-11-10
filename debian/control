@@ -384,7 +384,7 @@ Depends: ${misc:Depends},
   playerctl,
   python3,
   python3-gi,
-  regolith-avizo,
+  regolith-avizo (>= 0.1.7),
   regolith-wm-config
 Description: Configuration for providing media key functionality
 
