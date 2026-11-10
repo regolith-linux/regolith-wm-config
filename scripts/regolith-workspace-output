@@ -1,0 +1,755 @@
+#!/usr/bin/python3
+"""Keep Regolith workspaces on the outputs their resources name.
+
+For each workspace NN from 01 to 19, the resource wm.workspace.NN.output
+holds output names separated by spaces or tabs, the preferred one first:
+
+    wm.workspace.03.output: HDMI-1 HDMI-A-1 eDP-1
+
+The workspace belongs on the first of those outputs that is connected.
+Names of outputs that are not connected are skipped, and an empty or
+missing value leaves the workspace where the window manager puts it. One
+line serves both sessions, although they name outputs differently.
+
+The configuration of both sessions starts this program with exec_always.
+One instance serves each window manager process; later starts exit at
+once. It
+
+- gives the window manager a `workspace <name> output <outputs>`
+  assignment for each value, so the workspace keys open pinned workspaces
+  on their outputs: sway takes them as commands, after every
+  configuration (re)load; i3 reads them from
+  $XDG_RUNTIME_DIR/regolith-workspace-output/i3.conf, which its root
+  configuration includes, and reloads its configuration when that file
+  changes;
+- at session start, shows on each output the lowest-numbered workspace
+  that belongs there;
+- moves an open pinned workspace, with its windows, when an output that
+  stands higher in its list appears, when its own output goes away, and
+  when the configuration is reloaded.
+
+The names in the assignments are the ones the window manager gives the
+workspaces when their keys open them. Workspace names from the looks carry
+markup with double quotes, which i3 keeps and sway strips, so a single
+hand-written line cannot match them in both sessions.
+
+A `workspace ... output ...` line of the user's own, in
+~/.config/regolith3/common-wm/config.d/ or ~/.config/regolith3/<wm>/config.d/,
+takes precedence: the value for that workspace is then ignored.
+
+In the i3 session, regolith-i3-workspace-memory brings back the workspaces
+without a value when their monitor returns. It leaves alone the workspaces
+assigned in i3's configuration, which includes the assignments written here,
+and i3 itself brings a pinned workspace back when its output returns.
+"""
+import fcntl
+import glob
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+PROGRAM = "regolith-workspace-output"
+WORKSPACES = range(1, 20)
+# How long a move is retried until the workspace is on its output.
+MOVE_SECONDS = 2.0
+
+IPC_MAGIC = b"i3-ipc"
+IPC_COMMAND = 0
+IPC_GET_WORKSPACES = 1
+IPC_SUBSCRIBE = 2
+IPC_GET_OUTPUTS = 3
+IPC_GET_TREE = 4
+IPC_GET_VERSION = 7
+IPC_EVENT_BIT = 1 << 31
+IPC_EVENT_WORKSPACE = IPC_EVENT_BIT | 0
+IPC_EVENT_OUTPUT = IPC_EVENT_BIT | 1
+IPC_EVENT_SHUTDOWN = IPC_EVENT_BIT | 6
+
+# Output names both window managers take in an assignment line.
+OUTPUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:+@/-]*\Z")
+WS_VARIABLE = re.compile(r"\$ws([0-9]+)(?![A-Za-z0-9_.])")
+# Whitespace as sway's command parser knows it.
+SWAY_SPACE = " \f\n\r\t\v"
+
+CONFIG_HEADER = (
+    "# Written by regolith-workspace-output from the wm.workspace.NN.output\n"
+    "# resources. Changes made here are overwritten.\n"
+)
+
+
+def log(message):
+    print(f"{PROGRAM}: {message}", file=sys.stderr, flush=True)
+
+
+def pid_alive(pid):
+    """True while the process exists and has not exited (zombies have)."""
+    try:
+        with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as stream:
+            return stream.read().rpartition(")")[2].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+
+# ---------------------------------------------------------------------------
+# How each window manager reads a workspace name
+# ---------------------------------------------------------------------------
+
+def i3_quote(text):
+    """A double-quoted string that i3's command parser reads back as text."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def i3_config_quote(text):
+    """A double-quoted string that i3's configuration parser reads back as
+    text, or None if there is none: that parser only knows the escape \\",
+    so a backslash before a double quote or at the end cannot be written.
+    """
+    if re.search(r'\\(?=")|\\\Z', text):
+        return None
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def i3_string(text, word=False):
+    """What i3's parser makes of a string argument, and the rest of the text.
+
+    A quoted string ends at the next unescaped double quote. An unquoted
+    one ends at `;` or `,` (a command separator), and a word, as in
+    configuration lines, also at whitespace or `]`. In both, i3 turns `\\"`
+    into `"` and `\\\\` into `\\`.
+    """
+    text = text.lstrip(" \t")
+    if text.startswith('"'):
+        i = 1
+        while i < len(text) and text[i] != '"':
+            i += 2 if text[i] == "\\" and i + 1 < len(text) else 1
+        body, rest = text[1:i], text[i + 1:]
+    else:
+        stops = " \t\r\n];," if word else "\r\n;,"
+        i = 0
+        while i < len(text) and text[i] not in stops:
+            i += 1
+        body, rest = text[:i], text[i:]
+    return re.sub(r'\\(["\\])', r"\1", body), rest
+
+
+def sway_split(text):
+    """sway's split_args(): words, split at whitespace outside quotes."""
+    words, word = [], None
+    in_string = in_char = in_brackets = escaped = False
+    for char in text + "\0":
+        if word is None:
+            if char in SWAY_SPACE:
+                continue
+            if char == "\0":
+                break
+            word = ""
+        if char == '"' and not in_char and not escaped:
+            in_string = not in_string
+        elif char == "'" and not in_string and not escaped:
+            in_char = not in_char
+        elif (char == "[" and not in_string and not in_char
+              and not in_brackets and not escaped):
+            in_brackets = True
+        elif char == "]" and not in_string and not in_char and in_brackets \
+                and not escaped:
+            in_brackets = False
+        elif char == "\\":
+            escaped = not escaped
+        elif char == "\0" or (char in SWAY_SPACE and not in_string
+                              and not in_char and not in_brackets
+                              and not escaped):
+            if word:
+                words.append(word)
+            word, escaped = None, False
+            continue
+        if char != "\\":
+            escaped = False
+        word += char
+    return words
+
+
+def sway_strip(word):
+    """sway's strip_quotes(): drop the quote characters that delimit."""
+    out = []
+    in_string = in_char = escaped = False
+    for char in word:
+        if char == "'" and not in_string and not escaped:
+            in_char = not in_char
+            continue
+        if char == '"' and not in_char and not escaped:
+            in_string = not in_string
+            continue
+        escaped = not escaped if char == "\\" else False
+        out.append(char)
+    return "".join(out)
+
+
+def sway_words(text):
+    """The arguments sway passes to a command, after removing quotes."""
+    return [sway_strip(word) if word[0] in "\"'" else word
+            for word in sway_split(text)]
+
+
+def quote_output(name):
+    # Output names match OUTPUT_NAME or come from the window manager, and
+    # have neither quotes nor backslashes; both parsers read this back as is.
+    return f'"{name}"'
+
+
+# ---------------------------------------------------------------------------
+# Window manager IPC
+# ---------------------------------------------------------------------------
+
+class IPC:
+    """One connection to the i3 or sway IPC socket."""
+
+    def __init__(self, path, timeout=10.0):
+        # A busy window manager (at session start every exec'd program
+        # connects at once) can leave its listen queue full; a connect with a
+        # timeout then fails at once with EAGAIN. Retry until the timeout.
+        deadline = time.monotonic() + timeout
+        while True:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                self.sock.settimeout(timeout)
+                self.sock.connect(path)
+                creds = self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                             struct.calcsize("3i"))
+                break
+            except (BlockingIOError, ConnectionRefusedError):
+                self.sock.close()
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.05)
+            except OSError:
+                self.sock.close()
+                raise
+        self.peer_pid = struct.unpack("3i", creds)[0]
+
+    def close(self):
+        self.sock.close()
+
+    def _read(self, size):
+        data = b""
+        while len(data) < size:
+            chunk = self.sock.recv(size - len(data))
+            if not chunk:
+                raise ConnectionError("IPC connection closed")
+            data += chunk
+        return data
+
+    def send(self, kind, payload=""):
+        body = payload.encode("utf-8")
+        self.sock.sendall(IPC_MAGIC + struct.pack("<II", len(body), kind) + body)
+
+    def receive(self):
+        header = self._read(14)
+        if header[:6] != IPC_MAGIC:
+            raise ConnectionError("bad IPC reply")
+        length, kind = struct.unpack("<II", header[6:])
+        return kind, json.loads(self._read(length).decode("utf-8", "replace"))
+
+    def request(self, kind, payload=""):
+        self.send(kind, payload)
+        return self.receive()[1]
+
+    def command(self, text):
+        failed = [reply.get("error", "failed")
+                  for reply in self.request(IPC_COMMAND, text)
+                  if not reply.get("success")]
+        if failed:
+            log(f"{text}: {'; '.join(failed)}")
+        return not failed
+
+
+def socket_path():
+    for variable in ("SWAYSOCK", "I3SOCK"):
+        path = os.environ.get(variable)
+        if path and os.path.exists(path):
+            return path
+    for program in ("sway", "i3"):
+        try:
+            result = subprocess.run([program, "--get-socketpath"],
+                                    capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        path = result.stdout.strip()
+        if result.returncode == 0 and path and os.path.exists(path):
+            return path
+    return None
+
+
+def walk(node):
+    yield node
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        yield from walk(child)
+
+
+def find_node(tree, con_id):
+    return next((node for node in walk(tree) if node.get("id") == con_id), None)
+
+
+def first_window(node):
+    for child in walk(node):
+        if (child is not node and child.get("type") in ("con", "floating_con")
+                and not child.get("nodes") and not child.get("floating_nodes")):
+            return child["id"]
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+def read_resources(wm):
+    """The session's resources as a dict, or None if they cannot be read."""
+    argv = ["trawldb", "--nocpp", "-q"] if wm == "sway" else ["xrdb", "-query"]
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"cannot read resources: {error}")
+        return None
+    if result.returncode != 0:
+        log(f"cannot read resources: {result.stderr.strip()}")
+        return None
+    resources = {}
+    for line in result.stdout.splitlines():
+        name, colon, value = line.partition(":")
+        if colon:
+            resources[name.strip()] = value.lstrip()
+    return resources
+
+
+class Settings:
+    """Workspace names and output lists, as the resources give them."""
+
+    def __init__(self, wm, resources, home):
+        self.wm = wm
+        self.values = {num: resources.get(f"wm.workspace.{num:02d}.name")
+                       for num in WORKSPACES}
+        self.names = {num: self.name_of(self.variable(num)) for num in WORKSPACES}
+        ignored = self.user_assignments(home)
+        self.pins = {}
+        for num in WORKSPACES:
+            value = resources.get(f"wm.workspace.{num:02d}.output", "")
+            names = [name for name in value.split() if OUTPUT_NAME.match(name)]
+            if not names or num in ignored:
+                continue
+            if wm == "i3" and i3_config_quote(self.names[num]) is None:
+                log(f"workspace {num}: i3 cannot assign a name with a backslash "
+                    "before a double quote or at the end; ignoring its output")
+                continue
+            self.pins[num] = names
+
+    def variable(self, num):
+        """What $wsN holds in the session's configuration.
+
+        Both root configurations read it with set_from_resource and the
+        default "N"; i3 keeps the quotes of the default, and sway's root
+        configuration then puts the value in double quotes (set $wsN "$wsN").
+        """
+        value = self.values[num]
+        if self.wm == "sway":
+            return '"' + (str(num) if value is None else value) + '"'
+        return f'"{num}"' if value is None else value
+
+    def name_of(self, text):
+        """The workspace name the window manager makes of `workspace <text>`."""
+        if self.wm == "sway":
+            return " ".join(sway_words(text))
+        return i3_string(text)[0]
+
+    def argument(self, num):
+        """The argument that names workspace num in a command.
+
+        For sway it is $wsN's own value, which sway reads exactly as it does
+        in the workspace keys. sway applies no escapes to commands, so an
+        escaped name would differ from the one the keys give.
+        """
+        if self.wm == "sway":
+            return self.variable(num)
+        return i3_quote(self.names[num])
+
+    def user_assignments(self, home):
+        """Numbers of the workspaces the user's own partials assign to outputs."""
+        by_name = {name: num for num, name in sorted(self.names.items(),
+                                                     reverse=True)}
+        found = set()
+        for directory in ("common-wm", self.wm):
+            pattern = os.path.join(home, ".config", "regolith3", directory,
+                                   "config.d", "*")
+            for path in sorted(glob.glob(pattern)):
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+                        text = stream.read()
+                except OSError:
+                    continue
+                for line in text.replace("\\\n", " ").splitlines():
+                    name = self.assigned_name(line)
+                    if name is None:
+                        continue
+                    if name in by_name:
+                        found.add(by_name[name])
+                    elif self.wm == "i3" and name.isdigit() and int(name) in WORKSPACES:
+                        # i3 applies an assignment to a bare number to the
+                        # workspace with that number, whatever its name.
+                        found.add(int(name))
+        return found
+
+    def assigned_name(self, line):
+        """The workspace a `workspace <name> output ...` line assigns, or None."""
+        line = WS_VARIABLE.sub(
+            lambda m: (self.variable(int(m.group(1)))
+                       if int(m.group(1)) in WORKSPACES else m.group(0)),
+            line.strip())
+        if self.wm == "sway":
+            words = sway_words(line)
+            if len(words) < 4 or words[0] != "workspace":
+                return None
+            at = next((i for i, word in enumerate(words)
+                       if word.lower() == "output"), None)
+            if at is None or at < 2 or at + 1 >= len(words):
+                return None
+            return " ".join(words[1:at])
+        keyword, _, rest = line.partition(" ")
+        if keyword != "workspace":
+            keyword, _, rest = line.partition("\t")
+        if keyword != "workspace":
+            return None
+        name, rest = i3_string(rest, word=True)
+        words = rest.split()
+        if len(words) < 2 or words[0] != "output":
+            return None
+        return name
+
+    def target(self, num, outputs):
+        """The first output in the workspace's list that is connected."""
+        connected = {output.lower(): output for output in outputs}
+        for name in self.pins.get(num, ()):
+            if name.lower() in connected:
+                return connected[name.lower()]
+        return None
+
+    def rank(self, num, output):
+        names = [name.lower() for name in self.pins.get(num, ())]
+        return names.index(output.lower()) if output.lower() in names else len(names)
+
+    def assignments(self):
+        """`workspace <name> output <outputs>` for every pinned workspace:
+        commands for sway, configuration lines for i3."""
+        lines = []
+        for num, outputs in sorted(self.pins.items()):
+            name = (i3_config_quote(self.names[num]) if self.wm == "i3"
+                    else self.argument(num))
+            lines.append(f"workspace {name} output {' '.join(outputs)}")
+        return lines
+
+    def config(self):
+        if not self.pins:
+            return ""
+        return CONFIG_HEADER + "".join(line + "\n" for line in self.assignments())
+
+
+# ---------------------------------------------------------------------------
+# Placement
+# ---------------------------------------------------------------------------
+
+class Placement:
+    """Places the pinned workspaces of one window manager."""
+
+    def __init__(self, path, ipc, wm, directory, arrange):
+        self.path = path
+        self.ipc = ipc
+        self.wm = wm
+        self.config_path = os.path.join(directory, "i3.conf")
+        self.pending_arrange = arrange
+        self.settings = None
+        self.outputs = []
+        self.positions = {}
+
+    def load_settings(self):
+        resources = read_resources(self.wm)
+        if resources is None and self.settings is not None:
+            return
+        self.settings = Settings(self.wm, resources or {}, os.environ.get("HOME", ""))
+
+    def write_config(self):
+        """Bring the assignment file up to date; True if it changed."""
+        text = self.settings.config()
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as stream:
+                current = stream.read()
+        except FileNotFoundError:
+            current = ""
+        except OSError:
+            current = None
+        if text == current:
+            return False
+        try:
+            if not text:
+                os.unlink(self.config_path)
+                return True
+            fd, temporary = tempfile.mkstemp(dir=os.path.dirname(self.config_path),
+                                             prefix=".")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    stream.write(text)
+                os.replace(temporary, self.config_path)
+            except BaseException:
+                os.unlink(temporary)
+                raise
+        except OSError as error:
+            log(f"cannot write {self.config_path}: {error}")
+            return False
+        return True
+
+    def look(self):
+        outputs = [output["name"] for output in self.ipc.request(IPC_GET_OUTPUTS)
+                   if output.get("active")]
+        return outputs, self.ipc.request(IPC_GET_WORKSPACES)
+
+    def remember(self):
+        self.outputs, workspaces = self.look()
+        self.positions = {ws["id"]: ws["output"] for ws in workspaces}
+
+    def move(self, moves):
+        """Move (workspace, output) pairs and leave the focus where it was."""
+        if not moves:
+            return
+        wanted = {ws["id"]: output for ws, output in moves}
+        tree = self.ipc.request(IPC_GET_TREE)
+        focus = next((node for node in walk(tree) if node.get("focused")), None)
+        deadline = time.monotonic() + MOVE_SECONDS
+        while True:
+            for ws, output in moves:
+                self.move_one(tree, ws, output)
+            # Confirm: a command can fail while an output is still settling.
+            outputs, workspaces = self.look()
+            moves = [(ws, wanted[ws["id"]]) for ws in workspaces
+                     if ws["id"] in wanted and ws["output"] != wanted[ws["id"]]
+                     and wanted[ws["id"]] in outputs]
+            if not moves or time.monotonic() > deadline:
+                break
+            time.sleep(0.1)
+            tree = self.ipc.request(IPC_GET_TREE)
+        self.restore_focus(focus)
+
+    def move_one(self, tree, ws, output):
+        """Move one workspace without naming it: names need no quoting then."""
+        log(f"moving workspace {ws['num']} from {ws['output']} to {output}")
+        target = f"move workspace to output {quote_output(output)}"
+        if self.wm == "i3":
+            self.ipc.command(f"[con_id={ws['id']}] {target}")
+            return
+        # sway criteria match windows only: move a hidden workspace by one of
+        # its windows, and a visible one as the focused workspace of its
+        # output. A hidden workspace without windows does not exist.
+        if ws.get("visible"):
+            self.ipc.command(f"focus output {quote_output(ws['output'])}; {target}")
+            return
+        node = find_node(tree, ws["id"])
+        window = first_window(node) if node else None
+        if window is not None:
+            self.ipc.command(f"[con_id={window}] {target}")
+
+    def restore_focus(self, focus):
+        if focus is None or focus.get("type") in ("root", "output"):
+            return
+        tree = self.ipc.request(IPC_GET_TREE)
+        now = next((node for node in walk(tree) if node.get("focused")), None)
+        if now is not None and now.get("id") == focus["id"]:
+            return
+        if find_node(tree, focus["id"]) is None:
+            return
+        if focus.get("type") != "workspace" or self.wm == "i3":
+            # i3 criteria match workspaces too.
+            self.ipc.command(f"[con_id={focus['id']}] focus")
+            return
+        # A focused workspace without windows: it is focused again by
+        # focusing its output, where it is the one shown.
+        ws = next((ws for ws in self.ipc.request(IPC_GET_WORKSPACES)
+                   if ws["id"] == focus["id"]), None)
+        if ws is not None and ws.get("visible"):
+            self.ipc.command(f"focus output {quote_output(ws['output'])}")
+
+    def place_open_workspaces(self):
+        """Move every open pinned workspace to its first connected output."""
+        outputs, workspaces = self.look()
+        moves = []
+        for ws in workspaces:
+            target = self.settings.target(ws.get("num"), outputs)
+            if target is not None and ws["output"] != target:
+                moves.append((ws, target))
+        self.move(moves)
+
+    def arrange(self):
+        """Show on each output the lowest-numbered workspace pinned to it."""
+        outputs, workspaces = self.look()
+        focused = next((ws["output"] for ws in workspaces if ws.get("focused")), None)
+        shown = False
+        for output in outputs:
+            claims = [num for num in self.settings.pins
+                      if self.settings.target(num, outputs) == output]
+            if not claims:
+                continue
+            num = min(claims)
+            self.ipc.command(f"focus output {quote_output(output)}")
+            self.ipc.command("workspace --no-auto-back-and-forth number "
+                             f"{self.settings.argument(num)}")
+            shown = True
+            ws = next((ws for ws in self.ipc.request(IPC_GET_WORKSPACES)
+                       if ws.get("num") == num), None)
+            if ws is not None and ws["output"] != output:
+                self.ipc.command(f"move workspace to output {quote_output(output)}")
+        if shown and focused is not None:
+            self.ipc.command(f"focus output {quote_output(focused)}")
+
+    def reload(self):
+        """The configuration was (re)loaded: catch up with the resources."""
+        self.load_settings()
+        if self.wm == "sway":
+            # sway takes assignments as commands too; a reload has just
+            # dropped the ones given before, so give them again. One command
+            # each: a name's quotes cannot then swallow the next command.
+            for assignment in self.settings.assignments():
+                self.ipc.command(assignment)
+        elif self.write_config():
+            # i3 reads them from its configuration only. The reload event
+            # that follows brings us back here.
+            self.ipc.command("reload")
+            return
+        self.place_open_workspaces()
+        if self.pending_arrange:
+            self.pending_arrange = False
+            self.arrange()
+        self.remember()
+
+    def follow_outputs(self):
+        """Move pinned workspaces after outputs appeared or went away."""
+        outputs, workspaces = self.look()
+        if set(outputs) == set(self.outputs):
+            self.positions = {ws["id"]: ws["output"] for ws in workspaces}
+            return
+        added = [output for output in outputs if output not in self.outputs]
+        moves = []
+        for ws in workspaces:
+            num = ws.get("num")
+            target = self.settings.target(num, outputs)
+            if target is None:
+                continue
+            before = self.positions.get(ws["id"], ws["output"])
+            if before not in outputs or any(
+                    self.settings.rank(num, output) < self.settings.rank(num, before)
+                    for output in added):
+                wanted = target
+            else:
+                # Nothing in the list changed for this workspace: it stays,
+                # even where the window manager moved it on its own.
+                wanted = before
+            if ws["output"] != wanted:
+                moves.append((ws, wanted))
+        self.move(moves)
+        self.remember()
+
+    def subscribe(self):
+        events = IPC(self.path)
+        reply = events.request(IPC_SUBSCRIBE,
+                               json.dumps(["workspace", "output", "shutdown"]))
+        if not reply.get("success"):
+            events.close()
+            raise ConnectionError("cannot subscribe to window manager events")
+        events.sock.settimeout(None)
+        return events
+
+    def serve(self):
+        """Follow the window manager until it exits."""
+        events = self.subscribe()
+        try:
+            self.reload()
+            while True:
+                kind, event = events.receive()
+                if kind == IPC_EVENT_SHUTDOWN:
+                    if event.get("change") != "restart":
+                        return
+                    raise ConnectionError("restarting")
+                if kind == IPC_EVENT_WORKSPACE and event.get("change") == "reload":
+                    self.reload()
+                elif kind in (IPC_EVENT_WORKSPACE, IPC_EVENT_OUTPUT):
+                    self.follow_outputs()
+        finally:
+            events.close()
+
+    def run(self):
+        pid = self.ipc.peer_pid
+        while True:
+            try:
+                self.serve()
+                return 0
+            except (OSError, ValueError, ConnectionError):
+                pass
+            self.ipc.close()
+            # i3 restarts in place and comes back with the same process and
+            # socket; anything else means the window manager is gone.
+            deadline = time.monotonic() + 30
+            while True:
+                if not pid_alive(pid) or time.monotonic() > deadline:
+                    return 0
+                try:
+                    self.ipc = IPC(self.path, timeout=1.0)
+                except OSError:
+                    time.sleep(0.2)
+                    continue
+                if self.ipc.peer_pid != pid:
+                    self.ipc.close()
+                    return 0
+                break
+
+
+def main():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        log("XDG_RUNTIME_DIR is not set")
+        return 1
+    path = socket_path()
+    if path is None:
+        log("no i3 or sway IPC socket found")
+        return 1
+    try:
+        ipc = IPC(path)
+        wm = "sway" if ipc.request(IPC_GET_VERSION).get("variant") == "sway" else "i3"
+    except (OSError, ValueError, ConnectionError) as error:
+        log(f"cannot talk to the window manager: {error}")
+        return 1
+    directory = os.path.join(runtime, PROGRAM)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    for stale in glob.glob(os.path.join(directory, "*.lock")):
+        pid = stale[:-len(".lock")].rpartition("-")[2]
+        if pid.isdigit() and not pid_alive(int(pid)):
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
+    lock_path = os.path.join(directory, f"{wm}-{ipc.peer_pid}.lock")
+    first = not os.path.exists(lock_path)
+    lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0  # another instance already serves this window manager
+    status = Placement(path, ipc, wm, directory, arrange=first).run()
+    # The window manager has gone: nothing is left for this lock to guard.
+    try:
+        os.unlink(lock_path)
+    except OSError:
+        pass
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

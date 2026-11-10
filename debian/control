@@ -27,7 +27,8 @@ Recommends:
   regolith-wm-networkmanager,
   regolith-wm-resize,
   regolith-wm-rofication-ilia,
-  regolith-wm-workspace-config
+  regolith-wm-workspace-config,
+  regolith-wm-workspace-output
 Conflicts:
   regolith-i3-config,
   regolith-sway-config,
@@ -182,6 +183,19 @@ Depends: ${misc:Depends},
 Description: Return workspaces to their monitor in i3
  Moves workspaces back to the monitor they were on when that monitor
  returns after sleep, undocking or suspend, as the sway session does.
+
+Package: regolith-wm-workspace-output
+Architecture: any
+Depends: ${misc:Depends},
+  python3,
+  regolith-wm-config,
+  trawldb,
+  x11-xserver-utils
+Description: Keep workspaces on chosen outputs
+ Places each workspace on the first connected output named by its
+ wm.workspace.NN.output resource, when it is opened, when the session
+ starts, and when outputs are connected or disconnected, in i3 and sway.
+ In i3, regolith-i3-workspace-memory leaves these workspaces to it.
 
 Package: regolith-i3-rofi
 Architecture: any

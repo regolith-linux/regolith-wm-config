@@ -159,6 +159,11 @@ include $HOME/.config/regolith3/common-wm/config.d/*
 # Include any user i3 partials
 include $HOME/.config/regolith3/i3/config.d/*
 
+# Include the workspace output assignments that regolith-workspace-output
+# writes from the wm.workspace.NN.output resources. They come after the user
+# partials, whose own workspace output lines take precedence.
+include $XDG_RUNTIME_DIR/regolith-workspace-output/i3.conf
+
 # Start the systemd target manually is the session is not started by systemd
 # Notify systemd about successful session start otherwise
 exec --no-startup-id [ -z "${NOTIFY_SOCKET-}" ] \
