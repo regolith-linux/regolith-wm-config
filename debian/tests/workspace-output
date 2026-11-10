@@ -1,0 +1,280 @@
+#!/usr/bin/python3
+#
+# Runs i3 on a dummy X server with three outputs, with workspace names like the
+# looks' (markup with double quotes) and wm.workspace.NN.output values, starts
+# regolith-workspace-output and regolith-i3-workspace-memory against it, and
+# checks that:
+# - each claimed output shows its pinned workspace at the start;
+# - a pinned workspace goes to the next output in its list when its output is
+#   turned off, and back when it returns;
+# - when an output returns, the pinned workspaces and the others both come
+#   back, the first through the assignments, the others through
+#   workspace-memory, and nothing moves afterwards;
+# - new values take effect on reload, and the helper exits with i3.
+
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+import i3ipc
+from Xlib import X, Xatom, display as xdisplay
+
+MODE = "1024x768"
+TIMEOUT = 20.0
+OUTPUTS = ["DUMMY0", "DUMMY1", "DUMMY2"]
+
+XORG_CONF = """\
+Section "Device"
+  Identifier "dummy"
+  Driver "dummy"
+  VideoRam 256000
+EndSection
+Section "Screen"
+  Identifier "screen"
+  Device "dummy"
+  DefaultDepth 24
+  SubSection "Display"
+    Depth 24
+    Virtual 3072 768
+  EndSubSection
+EndSection
+"""
+
+COLORS = ["#268bd2", "#2aa198", "#859900", "#b58900", "#cb4b16"]
+
+
+def name(num):
+    """A workspace name as the looks give it."""
+    return (f'{num}:<span> </span>{num} <span foreground="{COLORS[num - 1]}">'
+            '★</span><span> </span>')
+
+
+# As in Regolith's root config: names from resources, a key for each workspace
+# (i3 also names the first workspaces of the outputs after these keys).
+I3_CONFIG = "font pango:monospace 8\nipc-socket {socket}\n" + "".join(
+    f'set_from_resource $ws{n} wm.workspace.0{n}.name "{n}"\n'
+    f"bindsym Mod4+{n} workspace number $ws{n}\n" for n in range(1, 6)) + """\
+include $XDG_RUNTIME_DIR/regolith-workspace-output/i3.conf
+"""
+
+
+def resources(pins):
+    return "".join(f"wm.workspace.0{n}.name: {name(n)}\n" for n in range(1, 6)) + \
+        "".join(f"wm.workspace.0{n}.output: {value}\n" for n, value in pins.items())
+
+
+def wait_for(what, check, timeout=TIMEOUT):
+    deadline = time.monotonic() + timeout
+    while True:
+        value = check()
+        if value:
+            return value
+        if time.monotonic() > deadline:
+            sys.exit(f"FAIL: timed out waiting for {what}")
+        time.sleep(0.2)
+
+
+def xrandr(*args):
+    subprocess.run(["xrandr", *args], check=True)
+
+
+def output_on(out, left):
+    xrandr("--output", out, "--mode", MODE, "--right-of", left)
+
+
+def make_edid(serial):
+    edid = bytearray(128)
+    edid[0:8] = b"\x00\xff\xff\xff\xff\xff\xff\x00"
+    vendor = sum((ord(c) - 64) << shift for c, shift in zip("RGL", (10, 5, 0)))
+    edid[8:10] = vendor.to_bytes(2, "big")
+    edid[10:12] = (1).to_bytes(2, "little")
+    edid[12:16] = serial.to_bytes(4, "little")
+    edid[18:20] = b"\x01\x04"
+    edid[127] = -sum(edid) % 256
+    return bytes(edid)
+
+
+def set_edids(dpy):
+    """Give each output a monitor of its own, for workspace-memory."""
+    root = dpy.screen().root
+    atom = dpy.intern_atom("EDID")
+    res = root.xrandr_get_screen_resources_current()
+    for output in res.outputs:
+        out = dpy.xrandr_get_output_info(output, res.config_timestamp).name
+        if out in OUTPUTS:
+            edid = make_edid(OUTPUTS.index(out) + 1)
+            dpy.xrandr_change_output_property(output, atom, Xatom.INTEGER,
+                                              X.PropModeReplace, (8, edid))
+    dpy.sync()
+
+
+def placement(i3):
+    return {ws.name: ws.output for ws in i3.get_workspaces()}
+
+
+def visible(i3):
+    return {ws.output: ws.name for ws in i3.get_workspaces() if ws.visible}
+
+
+def open_window(dpy, i3, num):
+    # The workspace key's command, with $wsN expanded as i3 does.
+    i3.command(f"workspace number {name(num)}")
+    window = dpy.screen().root.create_window(0, 0, 100, 100, 0, dpy.screen().root_depth)
+    window.map()
+    dpy.sync()
+    wait_for(f"a window on workspace {num}",
+             lambda: i3.get_tree().find_by_window(window.id))
+
+
+def expect(i3, what, wanted):
+    """Wait until each workspace number in wanted is on its output."""
+    def ok():
+        now = placement(i3)
+        return all(now.get(name(n)) == out for n, out in wanted.items())
+    if not wait_for_quiet(ok):
+        sys.exit(f"FAIL: {what}: {placement(i3)}")
+    print(f"PASS: {what}")
+
+
+def wait_for_quiet(check, timeout=TIMEOUT):
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.2)
+    return True
+
+
+def main():
+    tmp = os.environ.get("AUTOPKGTEST_TMP") or tempfile.mkdtemp()
+    runtime = tempfile.mkdtemp(dir=tmp)
+    os.chmod(runtime, 0o700)
+    home = tempfile.mkdtemp(dir=tmp)
+    os.environ.update(XDG_RUNTIME_DIR=runtime, HOME=home)
+    conf = os.path.join(tmp, "xorg.conf")
+    with open(conf, "w") as f:
+        f.write(XORG_CONF)
+    socket = os.path.join(tmp, "i3.sock")
+    with open(os.path.join(tmp, "i3.conf"), "w") as f:
+        f.write(I3_CONFIG.format(socket=socket))
+    res = os.path.join(tmp, "Xresources")
+
+    read_fd, write_fd = os.pipe()
+    xorg = subprocess.Popen(
+        ["Xorg", "-displayfd", str(write_fd), "-config", conf, "-noreset",
+         "-nolisten", "tcp", "-logfile", os.path.join(tmp, "Xorg.log")],
+        pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(write_fd)
+    with os.fdopen(read_fd) as f:
+        number = f.readline().strip()
+    if not number:
+        sys.exit("FAIL: Xorg did not start, see " + tmp + "/Xorg.log")
+    os.environ["DISPLAY"] = ":" + number
+    os.environ["I3SOCK"] = socket
+
+    procs = [xorg]
+    try:
+        query = subprocess.run(["xrandr", "--query"], check=True,
+                               capture_output=True, text=True).stdout
+        if "DUMMY2 " not in query:
+            # xserver-xorg-video-dummy has RandR outputs from 0.4.0 on.
+            print("SKIP: the dummy X driver has no RandR outputs")
+            sys.exit(77)
+        for out in OUTPUTS[1:]:
+            xrandr("--addmode", out, MODE)
+        xrandr("--output", "DUMMY0", "--mode", MODE)
+        output_on("DUMMY1", "DUMMY0")
+        output_on("DUMMY2", "DUMMY1")
+        dpy = xdisplay.Display()
+        set_edids(dpy)
+        with open(res, "w") as f:
+            f.write(resources({3: "DUMMY1", 5: "NOT-THERE DUMMY2 DUMMY1"}))
+        subprocess.run(["xrdb", "-nocpp", "-merge", res], check=True)
+
+        procs.insert(0, subprocess.Popen(["i3", "-c", os.path.join(tmp, "i3.conf")],
+                                         stdout=subprocess.DEVNULL))
+        i3 = wait_for("i3", try_connect)
+        helper = subprocess.Popen(["regolith-workspace-output"])
+        memory_log = open(os.path.join(tmp, "workspace-memory.log"), "w+")
+        memory = subprocess.Popen(["regolith-i3-workspace-memory"], stderr=memory_log)
+        procs[:0] = [helper, memory]
+
+        if not wait_for_quiet(lambda: visible(i3).get("DUMMY1") == name(3)
+                              and visible(i3).get("DUMMY2") == name(5)):
+            sys.exit(f"FAIL: start arrangement: {visible(i3)}")
+        print("PASS: each claimed output shows its pinned workspace at the start")
+        loaded = [f.get("path") for f in
+                  i3.get_config().ipc_data.get("included_configs", [])]
+        if os.path.join(runtime, "regolith-workspace-output", "i3.conf") not in loaded:
+            sys.exit(f"FAIL: i3 did not load the assignments: {loaded}")
+        print("PASS: i3 loaded the assignments")
+
+        i3.command("focus output DUMMY0")
+        open_window(dpy, i3, 3)
+        expect(i3, "workspace 3 opens on its output", {3: "DUMMY1"})
+        open_window(dpy, i3, 5)
+        i3.command("focus output DUMMY1")
+        open_window(dpy, i3, 2)
+        i3.command("focus output DUMMY0")
+        open_window(dpy, i3, 1)
+        expect(i3, "the setup", {1: "DUMMY0", 2: "DUMMY1", 3: "DUMMY1", 5: "DUMMY2"})
+        time.sleep(1)
+
+        xrandr("--output", "DUMMY2", "--off")
+        expect(i3, "workspace 5 goes to the next output in its list", {5: "DUMMY1"})
+        output_on("DUMMY2", "DUMMY1")
+        expect(i3, "workspace 5 returns to its output", {5: "DUMMY2"})
+
+        xrandr("--output", "DUMMY1", "--off")
+        expect(i3, "workspaces 2 and 3 leave DUMMY1", {2: "DUMMY0", 3: "DUMMY0"})
+        output_on("DUMMY1", "DUMMY0")
+        expect(i3, "pinned workspace 3 and workspace 2 both come back",
+               {1: "DUMMY0", 2: "DUMMY1", 3: "DUMMY1", 5: "DUMMY2"})
+        before = placement(i3)
+        time.sleep(3)
+        if placement(i3) != before:
+            sys.exit(f"FAIL: workspaces moved again: {before} -> {placement(i3)}")
+        print("PASS: nothing moves afterwards")
+
+        with open(res, "w") as f:
+            f.write(resources({3: "DUMMY0", 5: "NOT-THERE DUMMY2 DUMMY1"}))
+        subprocess.run(["xrdb", "-nocpp", "-load", res], check=True)
+        i3.command("reload")
+        expect(i3, "a new value takes effect on reload", {3: "DUMMY0", 5: "DUMMY2"})
+
+        i3.command("exit")
+        try:
+            status = helper.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            sys.exit("FAIL: regolith-workspace-output outlived i3")
+        if status != 0:
+            sys.exit(f"FAIL: regolith-workspace-output exited with {status}")
+        memory.wait(timeout=TIMEOUT)
+        memory_log.seek(0)
+        moved = [line for line in memory_log.read().splitlines()
+                 if "moving workspace" in line]
+        if any(name(n) in line for n in (3, 5) for line in moved):
+            sys.exit(f"FAIL: workspace-memory moved a pinned workspace: {moved}")
+        print("PASS: workspace-memory leaves the pinned workspaces alone")
+        print("PASS: exits with i3")
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+
+def try_connect():
+    try:
+        return i3ipc.Connection()
+    except Exception:
+        return None
+
+
+if __name__ == "__main__":
+    main()
