@@ -1,0 +1,447 @@
+#!/bin/bash
+# Start or stop a screen recording in a Regolith session.
+#
+# Usage: regolith-screen-record <i3|sway> <output|area|window>
+#
+#   output  the output of the focused workspace
+#   area    a region selected with the pointer (slop on X11, slurp on sway)
+#   window  the focused window's content, without its title bar and borders
+#
+# If a recording this script started is still running, any invocation stops
+# it instead of starting another one. The recording carries the sound of the
+# default output device (the monitor of the default sink when the recording
+# starts), never the microphone; without a sound server it has no sound. It
+# is saved as "Screencast From YYYY-MM-DD HH-MM-SS.mp4" (H.264 4:2:0, AAC) in
+# XDG_VIDEOS_DIR, and never overwrites an existing file.
+#
+# The recorder is wf-recorder on sway and ffmpeg's x11grab on X11. Only the
+# recorder process this script started (its PID and start time are kept in
+# the state file) is ever stopped; other wf-recorder or ffmpeg processes are
+# left alone, and a recorder that died is not taken for a running recording.
+
+set -u
+
+# Microseconds since the epoch (any locale's decimal separator removed).
+now_us() {
+    NOW_US=${EPOCHREALTIME//[!0-9]/}
+}
+
+now_us
+INVOKED_US=$NOW_US
+
+SESSION=${1:-}
+MODE=${2:-}
+
+usage() {
+    echo "usage: ${0##*/} <i3|sway> <output|area|window>" >&2
+    exit 2
+}
+
+case "$SESSION" in i3 | sway) ;; *) usage ;; esac
+case "$MODE" in output | area | window) ;; *) usage ;; esac
+
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "${XDG_RUNTIME_DIR}" ]; then
+    STATE_DIR="$XDG_RUNTIME_DIR/regolith-screen-record"
+else
+    STATE_DIR="/tmp/regolith-screen-record-$(id -u)"
+fi
+STATE_FILE="$STATE_DIR/state"
+LOCK_FILE="$STATE_DIR/lock"
+LOG_FILE="$STATE_DIR/recorder.log"
+
+(umask 077 && mkdir -p "$STATE_DIR") || exit 1
+
+notify() {
+    notify-send --app-name="Screen Recording" --icon=media-record "$1" "$2" \
+        </dev/null >/dev/null 2>&1 9>&- || true
+}
+
+fail() {
+    echo "${0##*/}: $1" >&2
+    notify "Screen recording failed" "$1"
+    exit 1
+}
+
+# One invocation at a time, so that two quick presses cannot start two
+# recorders. The lock is not held while the user selects a region.
+lock() {
+    exec 9>"$LOCK_FILE" || exit 1
+    flock -w 10 9 || exit 1
+}
+
+unlock() {
+    flock -u 9
+    exec 9>&-
+}
+
+# Set PROC_START to the start time of a live (not zombie) process, or fail.
+# Builtins only: this runs in polling loops that must keep their pace on a
+# busy machine.
+proc_start_time() {
+    local stat
+    PROC_START=""
+    { IFS= read -r stat <"/proc/$1/stat"; } 2>/dev/null || return 1
+    # Fields after "pid (comm) ": state is the first, starttime the 20th.
+    # shellcheck disable=SC2086
+    set -- ${stat##*) }
+    [ "$#" -ge 20 ] || return 1
+    [ "$1" != Z ] && [ "$1" != X ] || return 1
+    PROC_START=${20}
+}
+
+# True while the recorder with this PID and start time is running.
+recorder_alive() {
+    proc_start_time "$1" && [ "$PROC_START" = "$2" ]
+}
+
+# Wait until the recorder exits, or fail once the clock passes $3
+# (microseconds since the epoch). Deadlines are wall-clock times, so a
+# loaded machine that runs the loop slowly does not stretch them.
+wait_exit() {
+    while recorder_alive "$1" "$2"; do
+        now_us
+        [ "$NOW_US" -lt "$3" ] || return 1
+        sleep 0.05
+    done
+    return 0
+}
+
+# Read the state file into REC_PID, REC_START and REC_FILE. True while that
+# recorder is running; a stale state file (the recorder crashed or was
+# killed) is removed.
+recording_running() {
+    REC_PID="" REC_START="" REC_FILE=""
+    [ -f "$STATE_FILE" ] || return 1
+    {
+        IFS= read -r REC_PID
+        IFS= read -r REC_START
+        IFS= read -r REC_FILE
+    } <"$STATE_FILE"
+    if [ -n "$REC_PID" ] && [ -n "$REC_START" ] && recorder_alive "$REC_PID" "$REC_START"; then
+        return 0
+    fi
+    rm -f "$STATE_FILE"
+    return 1
+}
+
+# Stop the running recording, if any. Returns 1 when none is running.
+stop_recording() {
+    recording_running || return 1
+    local pid=$REC_PID start=$REC_START file=$REC_FILE grace
+    # Both recorders finalize the file on SIGINT; wf-recorder records with
+    # -D, so it gets a frame (and sees the signal) even on a static screen.
+    #
+    # The file has to be complete within 3 seconds of the key, so a recorder
+    # still busy after a grace period, counted from this invocation, is
+    # killed. ffmpeg writes a fragmented MP4 that is valid at every moment,
+    # so killing it only drops the last fraction of a second; it gets a
+    # shorter grace, which leaves room for a late start of this script.
+    # wf-recorder cannot write fragments and its file needs the trailer, so
+    # it gets as long as the deadline allows.
+    if [ "$SESSION" = sway ]; then
+        grace=2500000
+    else
+        grace=2000000
+    fi
+    kill -INT "$pid" 2>/dev/null
+    if ! wait_exit "$pid" "$start" $((INVOKED_US + grace)); then
+        kill -KILL "$pid" 2>/dev/null
+        now_us
+        wait_exit "$pid" "$start" $((NOW_US + 500000))
+    fi
+    rm -f "$STATE_FILE"
+    if [ -s "$file" ]; then
+        notify "Recording saved" "$file"
+    else
+        rm -f "$file"
+        notify "Screen recording failed" "The recording could not be saved to $file"
+    fi
+    return 0
+}
+
+# XDG_VIDEOS_DIR from user-dirs.dirs ("$HOME/..." or an absolute path).
+videos_dir() {
+    local conf line value
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
+    value=""
+    if [ -r "$conf" ]; then
+        line=$(grep -E '^[[:space:]]*XDG_VIDEOS_DIR[[:space:]]*=' "$conf" | tail -n 1)
+        value=${line#*=}
+        value=${value#"${value%%[![:space:]]*}"}
+        value=${value%"${value##*[![:space:]]}"}
+        case "$value" in
+            \"*\") value=${value#\"} value=${value%\"} ;;
+        esac
+        # shellcheck disable=SC2016
+        case "$value" in
+            '$HOME' | '${HOME}') value=$HOME ;;
+            '$HOME/'*) value="$HOME/${value#\$HOME/}" ;;
+            '${HOME}/'*) value="$HOME/${value#\$\{HOME\}/}" ;;
+        esac
+    fi
+    case "$value" in
+        "") value="$HOME/Videos" ;;
+        /*) ;;
+        *) value="$HOME/$value" ;;
+    esac
+    printf '%s\n' "${value%/}"
+}
+
+# Create a new, empty file for the recording and print its name. The name
+# carries the local start time; a taken name gets a numeric suffix, and the
+# file is created exclusively, so an existing file is never overwritten.
+reserve_file() {
+    local dir base name n
+    dir=$(videos_dir)
+    mkdir -p "$dir" || return 1
+    base="$dir/Screencast From $(date '+%Y-%m-%d %H-%M-%S')"
+    name="$base.mp4"
+    n=1
+    while ! (set -C && : >"$name") 2>/dev/null; do
+        [ -e "$name" ] || [ -L "$name" ] || return 1
+        [ "$n" -le 999 ] || return 1
+        name="$base ($n).mp4"
+        n=$((n + 1))
+    done
+    printf '%s\n' "$name"
+}
+
+# The monitor source of the default sink, if a sound server answers.
+desktop_audio_source() {
+    local sink
+    sink=$(pactl get-default-sink 2>/dev/null) || return 1
+    [ -n "$sink" ] || return 1
+    printf '%s.monitor\n' "$sink"
+}
+
+# Geometry of the recorded area: sets X Y W H (layout coordinates) or, for
+# a sway output, OUTPUT.
+X="" Y="" W="" H="" OUTPUT=""
+
+focused_window_jq='first(.. | objects
+    | select(.focused? == true
+        and (.window != null or .app_id != null)
+        and ((.window_rect.width // 0) > 0))
+    | "\(.rect.x + .window_rect.x) \(.rect.y + .window_rect.y) \(.window_rect.width) \(.window_rect.height)") // empty'
+
+parse_xywh() {
+    # shellcheck disable=SC2086
+    set -- $1
+    [ "$#" -eq 4 ] || return 1
+    local v
+    for v in "$@"; do
+        case "$v" in '' | *[!0-9-]*) return 1 ;; esac
+    done
+    X=$1 Y=$2 W=$3 H=$4
+    [ "$W" -gt 0 ] && [ "$H" -gt 0 ]
+}
+
+select_area_sway() {
+    case "$MODE" in
+        output)
+            OUTPUT=$(swaymsg -t get_workspaces | jq -r 'first(.[] | select(.focused) | .output) // empty')
+            [ -n "$OUTPUT" ] || fail "No focused output found"
+            ;;
+        area)
+            local sel
+            sel=$(slurp -f '%x %y %w %h') || exit 0
+            parse_xywh "$sel" || exit 0
+            ;;
+        window)
+            parse_xywh "$(swaymsg -t get_tree | jq -r "$focused_window_jq")" ||
+                fail "No focused window to record"
+            clip_to_output_sway
+            ;;
+    esac
+}
+
+# wf-recorder records from one output: keep the window's area on the output
+# of the focused workspace.
+clip_to_output_sway() {
+    local name bounds ox oy ow oh
+    name=$(swaymsg -t get_workspaces | jq -r 'first(.[] | select(.focused) | .output) // empty')
+    bounds=$(swaymsg -t get_outputs | jq -r --arg o "$name" \
+        'first(.[] | select(.name == $o) | .rect | "\(.x) \(.y) \(.width) \(.height)") // empty')
+    # shellcheck disable=SC2086
+    set -- $bounds
+    [ "$#" -eq 4 ] || return 0
+    ox=$1 oy=$2 ow=$3 oh=$4
+    [ "$X" -lt "$ox" ] && W=$((W - (ox - X))) X=$ox
+    [ "$Y" -lt "$oy" ] && H=$((H - (oy - Y))) Y=$oy
+    [ $((X + W)) -gt $((ox + ow)) ] && W=$((ox + ow - X))
+    [ $((Y + H)) -gt $((oy + oh)) ] && H=$((oy + oh - Y))
+    if [ "$W" -lt 1 ] || [ "$H" -lt 1 ]; then
+        fail "The focused window is not on the focused output"
+    fi
+    return 0
+}
+
+select_area_i3() {
+    case "$MODE" in
+        output)
+            local name
+            name=$(i3-msg -t get_workspaces | jq -r 'first(.[] | select(.focused) | .output) // empty')
+            [ -n "$name" ] || fail "No focused output found"
+            parse_xywh "$(i3-msg -t get_outputs | jq -r --arg o "$name" \
+                'first(.[] | select(.name == $o) | .rect | "\(.x) \(.y) \(.width) \(.height)") // empty')" ||
+                fail "Output $name not found"
+            ;;
+        area)
+            local sel
+            sel=$(slop -f '%x %y %w %h') || exit 0
+            parse_xywh "$sel" || exit 0
+            ;;
+        window)
+            parse_xywh "$(i3-msg -t get_tree | jq -r "$focused_window_jq")" ||
+                fail "No focused window to record"
+            ;;
+    esac
+}
+
+# Keep an X11 area on the X screen: x11grab refuses areas outside it.
+clip_to_screen_i3() {
+    local bounds sw sh
+    bounds=$(i3-msg -t get_outputs | jq -r '[.[] | select(.active) | .rect]
+        | "\(map(.x + .width) | max) \(map(.y + .height) | max)"')
+    # shellcheck disable=SC2086
+    set -- $bounds
+    sw=${1:-0} sh=${2:-0}
+    case "$sw$sh" in *[!0-9]*) return 0 ;; esac
+    [ "$X" -lt 0 ] && W=$((W + X)) X=0
+    [ "$Y" -lt 0 ] && H=$((H + Y)) Y=0
+    [ "$sw" -gt 0 ] && [ $((X + W)) -gt "$sw" ] && W=$((sw - X))
+    [ "$sh" -gt 0 ] && [ $((Y + H)) -gt "$sh" ] && H=$((sh - Y))
+    return 0
+}
+
+# True when wf-recorder's --help lists the long option $1. Older releases
+# lack some options: --no-damage came with 0.3, --audio-codec with 0.4,
+# --overwrite and --audio-backend with 0.5.
+wf_recorder_has() {
+    [ -n "${WF_HELP+set}" ] || WF_HELP=$(wf-recorder --help 2>&1 </dev/null)
+    [[ $WF_HELP =~ $1([^-a-z]|$) ]]
+}
+
+# Fill RECORDER (an argument array) for the area, the file and the audio
+# source (empty for none).
+build_recorder() {
+    local file=$1 audio=$2
+    if [ "$SESSION" = sway ]; then
+        RECORDER=(wf-recorder)
+        # -D: without damage tracking, wf-recorder keeps receiving frames on
+        # a static screen and so exits promptly when it is stopped. Releases
+        # without it don't track damage at all.
+        wf_recorder_has --no-damage && RECORDER+=(-D)
+        # -y: overwrite the file reserved for the recording. Releases without
+        # it ask first; they read the answer from /dev/null (see
+        # spawn_recorder), and an empty answer means yes.
+        wf_recorder_has --overwrite && RECORDER+=(-y)
+        RECORDER+=(-c libx264 -x yuv420p -p preset=ultrafast)
+        if [ -n "$OUTPUT" ]; then
+            RECORDER+=(-o "$OUTPUT")
+        else
+            RECORDER+=(-g "$X,$Y ${W}x${H}")
+        fi
+        if [ -n "$audio" ]; then
+            # Releases without --audio-backend record from PulseAudio only,
+            # and those without -C encode the sound as AAC already.
+            wf_recorder_has --audio-backend && RECORDER+=(--audio-backend=pulse)
+            RECORDER+=("--audio=$audio")
+            wf_recorder_has --audio-codec && RECORDER+=(-C aac)
+        fi
+        RECORDER+=(-f "$file")
+    else
+        # 4:2:0 needs even dimensions: round odd ones down.
+        RECORDER=(ffmpeg -nostdin -hide_banner -loglevel warning -y
+            -f x11grab -framerate 30 -video_size "$((W / 2 * 2))x$((H / 2 * 2))"
+            -i "${DISPLAY}+${X},${Y}")
+        if [ -n "$audio" ]; then
+            RECORDER+=(-f pulse -i "$audio")
+        fi
+        # zerolatency: no frames held back in the encoder, so stopping
+        # has little left to encode.
+        RECORDER+=(-c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p)
+        if [ -n "$audio" ]; then
+            RECORDER+=(-c:a aac)
+        fi
+        # A fragmented MP4 flushed packet by packet: the file on disk is a
+        # playable MP4 at every moment, even if the recorder is killed
+        # before it writes its trailer.
+        RECORDER+=(-movflags +frag_keyframe+empty_moov+default_base_moof
+            -frag_duration 250000 -flush_packets 1 -f mp4 "$file")
+    fi
+}
+
+# Start RECORDER in its own session and check that it keeps running. Sets
+# PID and START. Returns 1 when the recorder exited by itself right away
+# (for example, it could not open its input), 2 when a signal killed it.
+spawn_recorder() {
+    local status
+    setsid "${RECORDER[@]}" </dev/null >>"$LOG_FILE" 2>&1 9>&- &
+    PID=$!
+    if proc_start_time "$PID"; then
+        START=$PROC_START
+        now_us
+        # Still running after half a second: it has started.
+        wait_exit "$PID" "$START" $((NOW_US + 500000)) || return 0
+    fi
+    wait "$PID"
+    status=$?
+    if [ "$status" -gt 128 ] && [ "$status" -le 192 ]; then
+        return 2
+    fi
+    return 1
+}
+
+lock
+stop_recording && exit 0
+unlock
+
+if [ "$SESSION" = sway ]; then
+    select_area_sway
+else
+    [ -n "${DISPLAY:-}" ] || fail "DISPLAY is not set"
+    select_area_i3
+    clip_to_screen_i3
+    if [ "$W" -lt 2 ] || [ "$H" -lt 2 ]; then
+        fail "The area to record is empty"
+    fi
+fi
+
+lock
+# Another key may have started a recording during the selection.
+recording_running && exit 0
+
+FILE=$(reserve_file) || fail "Cannot create a file in $(videos_dir)"
+AUDIO=$(desktop_audio_source) || AUDIO=""
+
+: >"$LOG_FILE"
+build_recorder "$FILE" "$AUDIO"
+spawn_recorder
+status=$?
+if [ "$status" -eq 1 ] && [ -n "$AUDIO" ]; then
+    # The sound server did not take the capture: record without sound.
+    AUDIO=""
+    build_recorder "$FILE" ""
+    spawn_recorder
+    status=$?
+fi
+if [ "$status" -ne 0 ]; then
+    rm -f "$FILE"
+    fail "The recorder did not start: $(tail -n 3 "$LOG_FILE")"
+fi
+
+printf '%s\n%s\n%s\n' "$PID" "$START" "$FILE" >"$STATE_FILE.new" &&
+    mv -f "$STATE_FILE.new" "$STATE_FILE"
+unlock
+
+case "$MODE" in
+    output) what="the screen" ;;
+    area) what="the selected area" ;;
+    window) what="the focused window" ;;
+esac
+if [ -n "$AUDIO" ]; then
+    what="$what with desktop sound"
+fi
+notify "Recording started" "Recording $what to $FILE. Press a recording key again to stop."
+exit 0

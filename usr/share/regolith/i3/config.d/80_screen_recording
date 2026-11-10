@@ -1,0 +1,18 @@
+###############################################################################
+# Screen recording
+###############################################################################
+# Record the focused output, a region selected with the pointer, or the
+# focused window's content, with desktop sound, to XDG_VIDEOS_DIR. While a
+# recording runs, any of the three keys stops it.
+
+## Session // Record Screen // <Super><Alt> r ##
+set_from_resource $wm.binding.screen_recording.output wm.binding.screen_recording.output r
+bindsym $mod+$alt+$wm.binding.screen_recording.output exec --no-startup-id regolith-screen-record i3 output
+
+## Session // Record Screen Area // <Super><Alt><Shift> r ##
+set_from_resource $wm.binding.screen_recording.area wm.binding.screen_recording.area Shift+r
+bindsym $mod+$alt+$wm.binding.screen_recording.area exec --no-startup-id regolith-screen-record i3 area
+
+## Session // Record Window // <Super><Alt><Ctrl> r ##
+set_from_resource $wm.binding.screen_recording.window wm.binding.screen_recording.window Ctrl+r
+bindsym $mod+$alt+$wm.binding.screen_recording.window exec --no-startup-id regolith-screen-record i3 window
