@@ -1,0 +1,152 @@
+#!/usr/bin/python3
+"""Pick an emoji in ilia's text list and copy it to the clipboard.
+
+The list has every fully-qualified emoji of the Unicode emoji-test.txt file,
+skin-tone variants included, with its name. Emojis picked before come first,
+most recently picked first; the others follow in the file's order. The
+recently picked emojis are kept in $XDG_STATE_HOME/regolith/emoji-recent (by
+default ~/.local/state/regolith/emoji-recent), shared by the i3 and sway
+sessions.
+
+The chosen emoji goes to the clipboard, and to the clipboard history, through
+regolith-clipboard.
+
+Arguments are passed on to ilia; the emoji key passes the look's stylesheet
+(-t $ilia.stylesheet), as the Look Selector key does.
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+
+EMOJI_TEST = "/usr/share/unicode/emoji/emoji-test.txt"
+
+
+def state_dir():
+    base = os.environ.get("XDG_STATE_HOME", "")
+    if not os.path.isabs(base):
+        base = os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "regolith")
+
+
+RECENT = os.path.join(state_dir(), "emoji-recent")
+
+
+def load_emojis():
+    """(sequence, name) of each fully-qualified emoji, in the file's order.
+
+    Lines look like (codepoints; status # emoji, version and name):
+    1F468 200D 1F467 ; fully-qualified # 👨‍👧 E4.0 family: man, girl
+    """
+    emojis = []
+    with open(EMOJI_TEST, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            fields, _, comment = line.partition("#")
+            codepoints, _, status = fields.partition(";")
+            if status.strip() != "fully-qualified":
+                continue
+            sequence = "".join(chr(int(cp, 16)) for cp in codepoints.split())
+            parts = comment.split(None, 2)
+            name = parts[2].strip() if len(parts) == 3 else ""
+            emojis.append((sequence, name))
+    return emojis
+
+
+def as_codepoints(sequence):
+    return " ".join(f"{ord(char):04X}" for char in sequence)
+
+
+def load_recent():
+    try:
+        with open(RECENT, encoding="ascii") as fh:
+            lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    recent = []
+    for line in lines:
+        try:
+            recent.append("".join(chr(int(cp, 16)) for cp in line.split()))
+        except ValueError:
+            continue
+    return recent
+
+
+def save_recent(recent):
+    directory = os.path.dirname(RECENT)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".emoji-recent-")
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as fh:
+            fh.write("".join(f"{as_codepoints(seq)}\n" for seq in recent))
+        os.replace(tmp, RECENT)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def choose(rows, ilia_args):
+    """Show rows in ilia's text list; return the printed text, or None."""
+    argv = ["ilia", "-p", "textlist", "-l", "Emoji", "-i",
+            "face-smile-big", *ilia_args]
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE)
+    except OSError as error:
+        print(f"regolith-emoji: cannot run ilia: {error}", file=sys.stderr)
+        return None
+
+    def feed():
+        # ilia may exit as soon as the user chooses, before reading every row.
+        try:
+            proc.stdin.write("".join(f"{row}\n" for row in rows).encode())
+            proc.stdin.close()
+        except OSError:
+            pass
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    answer = proc.stdout.read()
+    proc.wait()
+    writer.join(timeout=1)
+    if not answer:
+        return None
+    return answer.decode("utf-8", "replace").rstrip("\n")
+
+
+def main(ilia_args):
+    try:
+        emojis = load_emojis()
+    except OSError as error:
+        print(f"regolith-emoji: cannot read the emoji list: {error}",
+              file=sys.stderr)
+        return 1
+    known = {sequence for sequence, _ in emojis}
+    names = dict(emojis)
+    recent = []
+    for sequence in load_recent():
+        if sequence in known and sequence not in recent:
+            recent.append(sequence)
+    picked = set(recent)
+    order = recent + [seq for seq, _ in emojis if seq not in picked]
+    rows = {f"{seq} {names[seq]}": seq for seq in order}
+
+    sequence = rows.get(choose(list(rows), ilia_args))
+    if sequence is None:
+        return 0
+    save_recent([sequence] + [seq for seq in recent if seq != sequence])
+
+    helper = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                          "regolith-clipboard")
+    if not os.access(helper, os.X_OK):
+        helper = "regolith-clipboard"
+    return subprocess.run([helper, "copy"], input=sequence.encode("utf-8"),
+                          check=False).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
