@@ -285,11 +285,34 @@ if [[ ${1-} == --picture ]]; then
 fi
 
 if [[ ${1-} == --follow-style ]]; then
-  # Draw the background again on each change of the Default/Dark style
-  gsettings monitor org.gnome.desktop.interface color-scheme |
-    while read -r _; do
-      "${BASH_SOURCE[0]}"
-    done
+  # Draw the background again on each change of the Default/Dark style, for
+  # as long as this sway runs. sway doesn't end what it starts with exec, and
+  # gsettings monitor keeps running while the user's bus does, which can be
+  # longer than the session, so the watcher ends itself when sway exits.
+  # There is one watcher per sway: another one for the same sway ends at once.
+  lock=${XDG_RUNTIME_DIR:-/tmp}/regolith-swaybg-follow-style.${SWAYSOCK##*/}
+  exec {lock_fd}> "$lock" && flock -n "$lock_fd" || exit 0
+  exec {changes}< <(exec gsettings monitor org.gnome.desktop.interface \
+    color-scheme {lock_fd}>&-)
+  monitor=$!
+  # swaymsg returns on sway's shutdown event, or when sway's socket closes.
+  # On TERM, the subshell also reaps swaymsg: otherwise it is left as a zombie
+  # where the init process doesn't reap orphans, as in a container.
+  (
+    trap 'kill "$ipc" 2> /dev/null; wait "$ipc" 2> /dev/null; exit 0' TERM
+    swaymsg -t subscribe '["shutdown"]' > /dev/null 2>&1 &
+    ipc=$!
+    wait "$ipc"
+    kill "$monitor" 2> /dev/null
+  ) {lock_fd}>&- {changes}<&- &
+  ender=$!
+  while read -r -u "$changes" _; do
+    "${BASH_SOURCE[0]}" {lock_fd}>&- {changes}<&-
+  done
+  kill "$ender" 2> /dev/null
+  wait "$ender"
+  wait "$monitor" 2> /dev/null
+  rm -f "$lock"
   exit 0
 fi
 

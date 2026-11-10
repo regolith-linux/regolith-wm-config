@@ -20,11 +20,17 @@ value=$(sed -n "s/^$1:[[:space:]]*//p" "$STUB_RESOURCES" | tail -n 1)
 if [ -n "$value" ]; then printf '%s\n' "$value"; elif [ "$#" -ge 2 ]; then printf '%s\n' "$2"; else exit 1; fi
 EOF
 
-# swaymsg -t get_outputs: print $STUB_OUTPUTS; swaymsg <command>: log it
+# swaymsg -t get_outputs: print $STUB_OUTPUTS; swaymsg -t subscribe: write
+# its PID to $WORK/subscribe.pid and return once the file $STUB_SWAY_EXIT
+# exists, as when sway exits; swaymsg <command>: log it
 cat > "$WORK/bin/swaymsg" <<'EOF'
 #!/bin/sh
 if [ "$1" = -t ] && [ "$2" = get_outputs ]; then
     printf '%s\n' "$STUB_OUTPUTS"
+elif [ "$1" = -t ] && [ "$2" = subscribe ]; then
+    echo $$ > "$WORK/subscribe.pid"
+    while [ ! -e "$STUB_SWAY_EXIT" ]; do sleep 0.05; done
+    echo '{ "change": "exit" }'
 else
     printf "%s\n" "$*" | tr ";" "\n" >> "$STUB_LOG"
     echo '[ { "success": true } ]'
@@ -40,6 +46,13 @@ get)
     [ -n "$value" ] || exit 1
     printf '%s\n' "$value" ;;
 monitor)
+    if [ -n "${STUB_MONITOR_HOLD-}" ]; then
+        # one change, then keep running, as gsettings does, with the PID in
+        # $STUB_MONITOR_HOLD
+        echo $$ > "$STUB_MONITOR_HOLD"
+        printf "%s: 'prefer-dark'\n" "$3"
+        exec sleep 600
+    fi
     printf "%s: 'prefer-dark'\n%s: 'default'\n" "$3" "$3" ;;
 *)
     exit 1 ;;
@@ -65,6 +78,7 @@ export STUB_RESOURCES=$WORK/resources STUB_LOG=$WORK/log STUB_OUTPUTS=$ONE_OUTPU
 export STUB_GSETTINGS=$WORK/gsettings
 : > "$STUB_GSETTINGS"
 export REGOLITH_SWAYBG_RGB_TXT=$WORK/rgb.txt XDG_RUNTIME_DIR=$WORK/run HOME=$WORK
+export WORK STUB_SWAY_EXIT=$WORK/sway-exited SWAYSOCK=$WORK/run/sway-ipc.1000.100.sock
 
 # run <resources...>: run the script with these resources (and the arguments
 # in SCRIPT_ARGS)
@@ -343,6 +357,59 @@ else
     sed 's/^/       /' "$STUB_LOG" >&2
     status=1
 fi
+# check <description> <condition...>: report whether the condition holds
+check() {
+    local desc=$1; shift
+    if "$@"; then echo "ok   $desc"; else echo "FAIL $desc" >&2; status=1; fi
+}
+# Conditions, and waiting for them, used through check
+# shellcheck disable=SC2317
+{
+# wait_for <seconds> <condition...>
+wait_for() {
+    local n=$(( $1 * 20 )); shift
+    until "$@"; do n=$(( n - 1 )); [ "$n" -gt 0 ] || return 1; sleep 0.05; done
+}
+alive() { [ -s "$1" ] && kill -0 "$(cat "$1")" 2> /dev/null; }
+dead() { ! alive "$1"; }
+running() { kill -0 "$1" 2> /dev/null; }
+ended() { ! running "$1"; }
+drawn() { [ "$(grep -c . "$STUB_LOG")" -ge "$1" ]; }
+no_lock() { ! compgen -G "$WORK/run/regolith-swaybg-follow-style.*" > /dev/null; }
+}
+check '--follow-style: no swaymsg left when the style changes stop' wait_for 2 dead "$WORK/subscribe.pid"
+check '--follow-style: its lock is removed' wait_for 2 no_lock
+
+# follow_style: start the watcher in the background; its PID is in $watcher
+follow_style() {
+    rm -f "$WORK/subscribe.pid"
+    PATH="$WORK/bin:$PATH" bash "$SCRIPT" --follow-style > /dev/null 2>> "$WORK/err" &
+    watcher=$!
+}
+: > "$STUB_LOG"
+export STUB_MONITOR_HOLD=$WORK/monitor.pid
+follow_style
+first=$watcher
+check '--follow-style: drawn on a change while sway runs' wait_for 3 drawn 1
+check '--follow-style: waits for sway' wait_for 3 alive "$WORK/subscribe.pid"
+# A second watcher for the same sway, as from a second exec: ends at once
+follow_style
+check '--follow-style: a second watcher for the same sway ends at once' wait_for 2 ended "$watcher"
+check '--follow-style: the first watcher keeps running' running "$first"
+# sway exits: the watcher, gsettings monitor and swaymsg end
+touch "$STUB_SWAY_EXIT"
+check '--follow-style: ends when sway exits' wait_for 3 ended "$first"
+check '--follow-style: gsettings monitor ends with it' wait_for 2 dead "$STUB_MONITOR_HOLD"
+check '--follow-style: swaymsg ends with it' wait_for 2 dead "$WORK/subscribe.pid"
+# The next login, on the same user bus: a new sway gets its own watcher
+rm -f "$STUB_SWAY_EXIT" "$STUB_MONITOR_HOLD"
+: > "$STUB_LOG"
+SWAYSOCK=$WORK/run/sway-ipc.1000.200.sock follow_style
+check '--follow-style: the next sway gets a watcher' wait_for 3 drawn 1
+touch "$STUB_SWAY_EXIT"
+check '--follow-style: which ends with that sway' wait_for 3 ended "$watcher"
+check '--follow-style: no gsettings monitor left' wait_for 2 dead "$STUB_MONITOR_HOLD"
+unset STUB_MONITOR_HOLD
 : > "$STUB_GSETTINGS"
 
 exit $status
