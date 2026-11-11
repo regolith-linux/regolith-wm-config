@@ -138,6 +138,12 @@ def expect(i3, what, wanted):
     print(f"PASS: {what}")
 
 
+def logged(log, text):
+    """Whether a line of the log file contains text."""
+    with open(log.name, encoding="utf-8", errors="replace") as stream:
+        return any(text in line for line in stream)
+
+
 def wait_for_quiet(check, timeout=TIMEOUT):
     deadline = time.monotonic() + timeout
     while not check():
@@ -229,6 +235,12 @@ def main():
 
         xrandr("--output", "DUMMY1", "--off")
         expect(i3, "workspaces 2 and 3 leave DUMMY1", {2: "DUMMY0", 3: "DUMMY0"})
+        # workspace-memory reads the layout when it gets to an event, and can
+        # still be busy with the earlier ones. If DUMMY1 came back before it
+        # saw the layout without DUMMY1, it would take workspace 2 for moved
+        # by the user, and leave it on DUMMY0.
+        wait_for("workspace-memory to see DUMMY1 leave",
+                 lambda: logged(memory_log, "(DUMMY1) left"))
         output_on("DUMMY1", "DUMMY0")
         expect(i3, "pinned workspace 3 and workspace 2 both come back",
                {1: "DUMMY0", 2: "DUMMY1", 3: "DUMMY1", 5: "DUMMY2"})
