@@ -1,0 +1,13 @@
+#!/bin/sh
+# regolith-sway-volumectl <volumectl arguments>
+#
+# Runs avizo's volumectl with -n, so that the on-screen display names the
+# audio device unless it is a built-in speaker, as gnome-settings-daemon does
+# in the X11 session. A volumectl without that option rejects -n and changes
+# nothing, so then it runs without -n: the keys work and the display shows no
+# name. The arguments are passed on unchanged. 65_media_keybindings binds the
+# volume keys to this helper.
+if volumectl -h 2>/dev/null | grep -q '^ *-n '; then
+	exec volumectl -n "$@"
+fi
+exec volumectl "$@"
