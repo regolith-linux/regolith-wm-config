@@ -1,28 +1,29 @@
 ### Bindings managed by gsd_media_keys
 
 # Volume Controls
-# With -n, the OSD names the device (e.g. "Headphones - Built-in Audio Analog
-# Stereo") unless it is a built-in speaker, as gnome-settings-daemon does in the
-# X11 session.
+# regolith-sway-volumectl runs volumectl with -n where avizo has it: the OSD
+# then names the device (e.g. "Headphones - Built-in Audio Analog Stereo")
+# unless it is a built-in speaker, as gnome-settings-daemon does in the X11
+# session. With an older avizo it runs plain volumectl, without the name.
 set_from_resource $wm.media.volume.step sway.media.volume.step 5
-bindsym --locked XF86AudioRaiseVolume exec volumectl -n -u + $wm.media.volume.step
-bindsym --locked XF86AudioLowerVolume exec volumectl -n -u - $wm.media.volume.step
-bindsym --locked XF86AudioMute exec volumectl -n %
-bindsym --locked XF86AudioMicMute exec volumectl -n -m %
+bindsym --locked XF86AudioRaiseVolume exec regolith-sway-volumectl -u + $wm.media.volume.step
+bindsym --locked XF86AudioLowerVolume exec regolith-sway-volumectl -u - $wm.media.volume.step
+bindsym --locked XF86AudioMute exec regolith-sway-volumectl %
+bindsym --locked XF86AudioMicMute exec regolith-sway-volumectl -m %
 # The variants gnome-settings-daemon handles in the X11 session: Shift (with or
 # without Ctrl) changes the volume in fine 2 % steps; Ctrl, and Alt ("quiet",
 # without the feedback sound, which avizo never plays) act as the plain keys.
-bindsym --locked Shift+XF86AudioRaiseVolume exec volumectl -n -u + 2
-bindsym --locked Shift+XF86AudioLowerVolume exec volumectl -n -u - 2
-bindsym --locked Ctrl+Shift+XF86AudioRaiseVolume exec volumectl -n -u + 2
-bindsym --locked Ctrl+Shift+XF86AudioLowerVolume exec volumectl -n -u - 2
-bindsym --locked Ctrl+XF86AudioRaiseVolume exec volumectl -n -u + $wm.media.volume.step
-bindsym --locked Ctrl+XF86AudioLowerVolume exec volumectl -n -u - $wm.media.volume.step
-bindsym --locked Alt+XF86AudioRaiseVolume exec volumectl -n -u + $wm.media.volume.step
-bindsym --locked Alt+XF86AudioLowerVolume exec volumectl -n -u - $wm.media.volume.step
-bindsym --locked Ctrl+Alt+XF86AudioRaiseVolume exec volumectl -n -u + $wm.media.volume.step
-bindsym --locked Ctrl+Alt+XF86AudioLowerVolume exec volumectl -n -u - $wm.media.volume.step
-bindsym --locked Alt+XF86AudioMute exec volumectl -n %
+bindsym --locked Shift+XF86AudioRaiseVolume exec regolith-sway-volumectl -u + 2
+bindsym --locked Shift+XF86AudioLowerVolume exec regolith-sway-volumectl -u - 2
+bindsym --locked Ctrl+Shift+XF86AudioRaiseVolume exec regolith-sway-volumectl -u + 2
+bindsym --locked Ctrl+Shift+XF86AudioLowerVolume exec regolith-sway-volumectl -u - 2
+bindsym --locked Ctrl+XF86AudioRaiseVolume exec regolith-sway-volumectl -u + $wm.media.volume.step
+bindsym --locked Ctrl+XF86AudioLowerVolume exec regolith-sway-volumectl -u - $wm.media.volume.step
+bindsym --locked Alt+XF86AudioRaiseVolume exec regolith-sway-volumectl -u + $wm.media.volume.step
+bindsym --locked Alt+XF86AudioLowerVolume exec regolith-sway-volumectl -u - $wm.media.volume.step
+bindsym --locked Ctrl+Alt+XF86AudioRaiseVolume exec regolith-sway-volumectl -u + $wm.media.volume.step
+bindsym --locked Ctrl+Alt+XF86AudioLowerVolume exec regolith-sway-volumectl -u - $wm.media.volume.step
+bindsym --locked Alt+XF86AudioMute exec regolith-sway-volumectl %
 
 # Brightness Controls
 set_from_resource $wm.media.brightness.step wm.media.brightness.step 5

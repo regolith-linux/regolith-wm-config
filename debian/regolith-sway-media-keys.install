@@ -1,2 +1,3 @@
 usr/share/regolith/sway/config.d/65_media_keybindings
 scripts/regolith-sway-gsd-keys usr/bin
+scripts/regolith-sway-volumectl usr/bin
