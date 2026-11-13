@@ -152,7 +152,7 @@ AC_ACTION_CMD=$( get_lid_close_cmd "$AC_ACTION" )
 BATTERY_ACTION_CMD=$( get_lid_close_cmd "$BATTERY_ACTION" )
 
 
-if [[ $DISPLAY_COUNT > 1 ]]; then
+if [[ $DISPLAY_COUNT -gt 1 ]]; then
   if [[ -n $INBUILT_DISPLAY && "$CLAMSHELL_ENABLED" == "true" ]]; then
     handle_clamshell
     exit 0
