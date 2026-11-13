@@ -1,0 +1,3 @@
+usr/share/regolith/common/config.d/65_media_switch
+usr/share/regolith/i3/config.d/65_media_keybindings
+scripts/regolith-media-switch usr/bin
