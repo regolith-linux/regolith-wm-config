@@ -1,7 +1,16 @@
 #!/usr/bin/make -f
 
+# Regolith builds no sway session for Debian 12: sway-regolith, trawl,
+# regolith-inputd, regolith-displayd and regolith-session-sway are not built
+# for bookworm, so the regolith-sway-* packages could never be installed
+# there. Debian 12 builds get the i3 packages only, as regolith-session's
+# debian-bookworm branch does for its sessions.
+ifeq ($(shell . /etc/os-release && echo $$VERSION_CODENAME),bookworm)
+DH_PACKAGES := $(addprefix -N,$(shell dh_listpackages | grep '^regolith-sway-'))
+endif
+
 %:
-	dh $@
+	dh $@ $(DH_PACKAGES)
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
