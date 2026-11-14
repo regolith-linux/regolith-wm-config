@@ -1,0 +1,448 @@
+#!/usr/bin/python3
+"""Make i3 key bindings follow the active keyboard layout.
+
+i3 turns every `bindsym` key into a key code using the first keyboard layout
+(XKB group 1) and uses that key code in all layouts. With the input sources
+"English (US)" and "German", Super+z stays on the key labelled Z while German
+is active, and with "Russian" first no letter binding works at all.
+
+This program writes an i3 config fragment with:
+
+- a copy of each binding for every other layout (`bindsym GroupN+...`), when
+  the layout has the key somewhere else, so the binding follows the layout
+  that is active, as in GNOME and in sway;
+- for layouts without Latin letters (Russian, Greek, ...), the key code the
+  key has in the US layout (`bindcode GroupN+...`), so Super+z still works
+  there. GNOME does the same.
+
+The fragment is included by /etc/regolith/i3/config before the other
+partials. It only depends on the i3 configuration and the keyboard layouts,
+so it is rewritten (and i3 reloaded) only when one of them changes.
+
+Usage:
+  regolith-i3-layout-bindings            update the fragment, reload i3 if it changed
+  regolith-i3-layout-bindings --watch    update, then again whenever the keymap changes
+  regolith-i3-layout-bindings --print [--layouts us,de] [--config-json FILE]
+                                         print the fragment (for testing)
+"""
+
+import argparse
+import ctypes
+import fcntl
+import json
+import os
+import re
+import select
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+PROG = "regolith-i3-layout-bindings"
+MAX_GROUPS = 4
+
+# ---------------------------------------------------------------------------
+# libxkbcommon (the library i3 itself uses to translate key bindings)
+# ---------------------------------------------------------------------------
+
+
+class _RuleNames(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_char_p) for n in ("rules", "model", "layout", "variant", "options")]
+
+
+_xkb = ctypes.CDLL("libxkbcommon.so.0")
+_xkb.xkb_context_new.restype = ctypes.c_void_p
+_xkb.xkb_context_new.argtypes = [ctypes.c_int]
+_xkb.xkb_keymap_new_from_names.restype = ctypes.c_void_p
+_xkb.xkb_keymap_new_from_names.argtypes = [ctypes.c_void_p, ctypes.POINTER(_RuleNames), ctypes.c_int]
+_xkb.xkb_keymap_unref.argtypes = [ctypes.c_void_p]
+for _f in ("xkb_keymap_min_keycode", "xkb_keymap_max_keycode", "xkb_keymap_num_layouts"):
+    getattr(_xkb, _f).restype = ctypes.c_uint32
+    getattr(_xkb, _f).argtypes = [ctypes.c_void_p]
+_xkb.xkb_keymap_num_layouts_for_key.restype = ctypes.c_uint32
+_xkb.xkb_keymap_num_layouts_for_key.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+_xkb.xkb_keymap_layout_get_name.restype = ctypes.c_char_p
+_xkb.xkb_keymap_layout_get_name.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+_xkb.xkb_keymap_key_get_syms_by_level.restype = ctypes.c_int
+_xkb.xkb_keymap_key_get_syms_by_level.argtypes = [
+    ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_uint32))]
+_xkb.xkb_keysym_from_name.restype = ctypes.c_uint32
+_xkb.xkb_keymap_key_get_name.restype = ctypes.c_char_p
+_xkb.xkb_keymap_key_get_name.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+_xkb.xkb_keymap_key_by_name.restype = ctypes.c_uint32
+_xkb.xkb_keymap_key_by_name.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+_xkb.xkb_keysym_from_name.argtypes = [ctypes.c_char_p, ctypes.c_int]
+
+_ctx = _xkb.xkb_context_new(0)
+
+XKB_KEY_a, XKB_KEY_z = 0x61, 0x7A
+XKB_KEYCODE_INVALID = 0xFFFFFFFF
+
+
+def keysym_from_name(name):
+    return _xkb.xkb_keysym_from_name(name.encode(), 0)
+
+
+def keymap_from_names(layout, variant=None):
+    names = _RuleNames(None, None, layout.encode(), variant.encode() if variant else None, None)
+    km = _xkb.xkb_keymap_new_from_names(_ctx, ctypes.byref(names), 0)
+    if not km:
+        raise RuntimeError("cannot compile the keyboard layout %r" % layout)
+    return km
+
+
+def keymap_from_x11():
+    """The core keyboard's keymap, read from the X server the way i3 reads it."""
+    xcb = ctypes.CDLL("libxcb.so.1")
+    xcb.xcb_connect.restype = ctypes.c_void_p
+    xcb.xcb_connect.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
+    xcb.xcb_connection_has_error.argtypes = [ctypes.c_void_p]
+    xcb.xcb_disconnect.argtypes = [ctypes.c_void_p]
+    x11 = ctypes.CDLL("libxkbcommon-x11.so.0")
+    x11.xkb_x11_setup_xkb_extension.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    x11.xkb_x11_get_core_keyboard_device_id.argtypes = [ctypes.c_void_p]
+    x11.xkb_x11_keymap_new_from_device.restype = ctypes.c_void_p
+    x11.xkb_x11_keymap_new_from_device.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_int]
+
+    conn = xcb.xcb_connect(None, None)
+    try:
+        if not conn or xcb.xcb_connection_has_error(conn):
+            raise RuntimeError("cannot connect to the X server")
+        if not x11.xkb_x11_setup_xkb_extension(conn, 1, 0, 0, None, None, None, None):
+            raise RuntimeError("the X server has no XKB extension")
+        device = x11.xkb_x11_get_core_keyboard_device_id(conn)
+        km = x11.xkb_x11_keymap_new_from_device(_ctx, conn, device, 0)
+        if not km:
+            raise RuntimeError("cannot read the keymap from the X server")
+        return km
+    finally:
+        if conn:
+            xcb.xcb_disconnect(conn)
+
+
+class Layout:
+    """Level 1 and 2 keysyms of every key in one group of a keymap."""
+
+    def __init__(self, km, group):
+        self.name = (_xkb.xkb_keymap_layout_get_name(km, group) or b"").decode(errors="replace")
+        self.km = km
+        self.levels = {}  # keycode -> (level 1 syms, level 2 syms)
+        syms = ctypes.POINTER(ctypes.c_uint32)()
+        for kc in range(_xkb.xkb_keymap_min_keycode(km), _xkb.xkb_keymap_max_keycode(km) + 1):
+            n = _xkb.xkb_keymap_num_layouts_for_key(km, kc)
+            if n == 0:
+                continue
+            g = group if group < n else group % n  # keys with fewer groups wrap
+            lv = []
+            for level in (0, 1):
+                cnt = _xkb.xkb_keymap_key_get_syms_by_level(km, kc, g, level, ctypes.byref(syms))
+                lv.append(frozenset(syms[i] for i in range(cnt)))
+            if lv[0] or lv[1]:
+                self.levels[kc] = tuple(lv)
+        self.positions = {}  # keysym -> keycodes producing it on level 1 or 2
+        for kc, lv in self.levels.items():
+            for s in lv[0] | lv[1]:
+                self.positions.setdefault(s, set()).add(kc)
+        level1 = set().union(*(lv[0] for lv in self.levels.values())) if self.levels else set()
+        # GNOME (mutter's needs_secondary_layout) falls back to the US layout
+        # when the active layout lacks one of the letters a-z on level 1.
+        self.latin = all(s in level1 for s in range(XKB_KEY_a, XKB_KEY_z + 1))
+
+    def keycodes(self, sym):
+        return self.positions.get(sym, set())
+
+    def keycodes_in(self, sym, other):
+        """Key codes in the keymap of `other` of the keys that type `sym` here.
+
+        Keys are matched by name (<AB01> ...), so this works whether the X
+        server uses evdev or other key codes."""
+        out = set()
+        for kc in self.keycodes(sym):
+            name = _xkb.xkb_keymap_key_get_name(self.km, kc)
+            code = _xkb.xkb_keymap_key_by_name(other.km, name) if name else XKB_KEYCODE_INVALID
+            if code != XKB_KEYCODE_INVALID:
+                out.add(code)
+        return out
+
+    def syms_at(self, kc):
+        lv = self.levels.get(kc)
+        return (lv[0] | lv[1]) if lv else frozenset()
+
+
+def layouts_of(km):
+    n = min(_xkb.xkb_keymap_num_layouts(km), MAX_GROUPS)
+    return [Layout(km, g) for g in range(n)]
+
+
+# ---------------------------------------------------------------------------
+# i3 configuration
+# ---------------------------------------------------------------------------
+
+BINDSYM_RE = re.compile(r"^bindsym((?:\s+--[A-Za-z_-]+)*)\s+(\S+)\s+(.+)$")
+BUTTON_RE = re.compile(r"^button\d+$")
+
+
+def logical_lines(text):
+    """Config lines with backslash continuations joined, as i3 reads them."""
+    buf = ""
+    for raw in text.splitlines():
+        if raw.endswith("\\"):
+            buf += raw[:-1]
+            continue
+        yield (buf + raw).strip()
+        buf = ""
+    if buf:
+        yield buf.strip()
+
+
+def read_bindings(files):
+    """[(mode header or None, flags, combo, command)] for keyboard bindsyms.
+
+    Bindings in `bar { }` and other blocks are skipped; bindings in `mode`
+    blocks keep their mode header line so that the copies land in the same mode.
+    """
+    out = []
+    for text in files:
+        stack = []
+        for line in logical_lines(text):
+            if not line or line.startswith("#"):
+                continue
+            if line == "}":
+                if stack:
+                    stack.pop()
+                continue
+            if line.endswith("{"):
+                stack.append(line if line.startswith("mode") else None)
+                continue
+            if stack and stack[-1] is None:
+                continue
+            m = BINDSYM_RE.match(line)
+            if not m:
+                continue
+            flags = m.group(1).split()
+            combo, command = m.group(2), m.group(3)
+            out.append((stack[-1] if stack else None, flags, combo, command))
+    return out
+
+
+def split_combo(combo):
+    parts = combo.split("+")
+    return parts[:-1], parts[-1]
+
+
+# ---------------------------------------------------------------------------
+# The fragment
+# ---------------------------------------------------------------------------
+
+
+def generate(bindings, layouts, us):
+    """Return the config fragment for these bindings and keyboard layouts."""
+    if not layouts:
+        return ""
+    # Keysyms that depend on the layout: the printable keys of the US layout.
+    printable = set()
+    for kc, lv in us.levels.items():
+        if any(0x20 < s < 0x7F for s in lv[0]):
+            printable |= lv[0] | lv[1]
+
+    existing = {(mode, combo) for mode, _, combo, _ in bindings}
+    lines = {}  # mode header -> generated lines
+    seen = set()
+
+    def add(mode, line, key):
+        if key in seen:
+            return
+        seen.add(key)
+        lines.setdefault(mode, []).append(line)
+
+    first = layouts[0]
+    for mode, flags, combo, command in bindings:
+        mods, key = split_combo(combo)
+        if any(p.startswith("Group") or p == "Mode_switch" for p in mods) or BUTTON_RE.match(key):
+            continue
+        sym = keysym_from_name(key)
+        if not sym or sym not in printable:
+            continue
+        flagstr = "".join(f + " " for f in flags)
+        base = first.keycodes(sym)
+        for n, layout in enumerate(layouts, start=1):
+            here = layout.keycodes(sym)
+            if n > 1 and here and here != base:
+                # The key is somewhere else in this layout: follow it.
+                new = "Group%d+%s" % (n, combo)
+                if (mode, new) not in existing:
+                    add(mode, "bindsym %s%s %s" % (flagstr, new, command),
+                        ("sym", mode, n, tuple(flags), combo))
+            elif not here and not layout.latin:
+                # No such key in a non-Latin layout: use its US position.
+                for kc in sorted(us.keycodes_in(sym, layout)):
+                    # Leave keys alone that type a Latin character in this
+                    # layout; a copy above may already use them.
+                    if layout.syms_at(kc) & printable:
+                        continue
+                    new = "+".join(["Group%d" % n] + mods + [str(kc)])
+                    add(mode, "bindcode %s%s %s" % (flagstr, new, command),
+                        ("code", mode, n, tuple(flags), tuple(mods), kc))
+
+    if not lines:
+        return ""
+    names = ", ".join(l.name or "?" for l in layouts)
+    out = ["# Generated by %s for the keyboard layouts: %s." % (PROG, names),
+           "# Do not edit; it is rewritten when the i3 config or the layouts change."]
+    for mode in sorted(lines, key=lambda m: (m is not None, m or "")):
+        if mode is None:
+            out += lines[mode]
+        else:
+            out += [mode] + ["  " + l for l in lines[mode]] + ["}"]
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Talking to i3
+# ---------------------------------------------------------------------------
+
+I3_RUN_COMMAND, I3_GET_CONFIG = 0, 9
+
+
+def i3_socket_path():
+    path = os.environ.get("I3SOCK")
+    if path and os.path.exists(path):
+        return path
+    return subprocess.run(["i3", "--get-socketpath"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def i3_request(kind, payload=""):
+    data = payload.encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(i3_socket_path())
+        s.sendall(b"i3-ipc" + struct.pack("=II", len(data), kind) + data)
+        header = b""
+        while len(header) < 14:
+            chunk = s.recv(14 - len(header))
+            if not chunk:
+                raise RuntimeError("i3 closed the IPC connection")
+            header += chunk
+        length, _ = struct.unpack("=II", header[6:])
+        body = b""
+        while len(body) < length:
+            chunk = s.recv(length - len(body))
+            if not chunk:
+                raise RuntimeError("i3 closed the IPC connection")
+            body += chunk
+    return json.loads(body)
+
+
+def config_files(reply, skip):
+    files = reply.get("included_configs")
+    if not files:  # i3 < 4.20: only the main file is known
+        return [reply.get("config", "")]
+    skip = os.path.realpath(skip)
+    return [f.get("variable_replaced_contents") or f.get("raw_contents", "")
+            for f in files if os.path.realpath(f.get("path", "")) != skip]
+
+
+def output_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(runtime, "regolith", "i3", "layout-bindings")
+
+
+def update(path):
+    """Regenerate the fragment; reload i3 if it changed. Returns True if it did."""
+    fragment = generate(read_bindings(config_files(i3_request(I3_GET_CONFIG), path)),
+                        layouts_of(keymap_from_x11()), Layout(keymap_from_names("us"), 0))
+    try:
+        with open(path) as f:
+            old = f.read()
+    except FileNotFoundError:
+        old = ""
+    if fragment == old:
+        return False
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(fragment)
+    os.replace(tmp, path)
+    i3_request(I3_RUN_COMMAND, "reload")
+    return True
+
+
+def _die_with_parent():
+    try:
+        ctypes.CDLL(None).prctl(1, 15)  # PR_SET_PDEATHSIG, SIGTERM
+    except (OSError, AttributeError):
+        pass
+
+
+def safe_update(path):
+    try:
+        update(path)
+    except Exception as e:  # never leave the session without its watcher
+        print("%s: %s" % (PROG, e), file=sys.stderr)
+
+
+def watch(path):
+    """Update now and whenever the X keymap changes.
+
+    GNOME Flashback uploads a new keymap at login, when the input sources
+    change and when it needs another set of layouts; each upload rewrites the
+    _XKB_RULES_NAMES property on the root window, which `xprop -spy` reports.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    lock = open(path + ".lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        safe_update(path)  # i3 reloaded; a watcher is already running
+        return
+    spy = subprocess.Popen(["xprop", "-root", "-spy", "_XKB_RULES_NAMES"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                           preexec_fn=_die_with_parent)
+    due = [time.monotonic()]
+    while True:
+        timeout = max(0.0, min(due) - time.monotonic()) if due else None
+        ready, _, _ = select.select([spy.stdout], [], [], timeout)
+        if ready:
+            if not spy.stdout.readline():
+                return  # the X server went away
+            now = time.monotonic()
+            due = [now + 0.3, now + 2.0]
+            continue
+        if due and time.monotonic() >= min(due):
+            due.remove(min(due))
+            safe_update(path)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog=PROG, description=__doc__.splitlines()[0])
+    ap.add_argument("--watch", action="store_true", help="keep updating whenever the X keymap changes")
+    ap.add_argument("--print", action="store_true", help="print the fragment instead of installing it")
+    ap.add_argument("--layouts", help="with --print: comma-separated XKB layouts instead of the X keymap")
+    ap.add_argument("--config-json", help="with --print: an i3 GET_CONFIG reply instead of asking i3")
+    args = ap.parse_args()
+    path = output_path()
+
+    if args.print:
+        if args.config_json:
+            with open(args.config_json) as f:
+                reply = json.load(f)
+        else:
+            reply = i3_request(I3_GET_CONFIG)
+        km = keymap_from_names(args.layouts) if args.layouts else keymap_from_x11()
+        sys.stdout.write(generate(read_bindings(config_files(reply, path)), layouts_of(km),
+                                  Layout(keymap_from_names("us"), 0)))
+        return 0
+    if args.watch:
+        watch(path)
+        return 0
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    update(path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
