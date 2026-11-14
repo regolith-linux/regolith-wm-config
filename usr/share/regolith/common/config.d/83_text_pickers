@@ -1,0 +1,31 @@
+# Clipboard history and emoji picker, both picked through ilia's text list.
+#
+# regolith-clipboard records every copy to the clipboard (text and PNG
+# images, not the primary selection nor copies marked as passwords) in a
+# history shared by the i3 and sway sessions, and keeps the clipboard content
+# when the application that copied it exits. The history keeps the newest
+# wm.clipboard.history_size entries.
+set_from_resource $wm.clipboard.history_size wm.clipboard.history_size 100
+exec --no-startup-id regolith-clipboard daemon $wm.clipboard.history_size
+
+# The pickers use the look's ilia stylesheet, like the other ilia keys. This
+# partial is read before the session's 20_ilia, so it reads the resource
+# itself; an unset resource leaves ilia's default style (the fallback expands
+# to nothing).
+set_from_resource $wm.text_pickers.ilia_stylesheet ilia.stylesheet ${REGOLITH_NO_ILIA_STYLESHEET}
+
+## Launch // Clipboard History // <><Ctrl> v ##
+set_from_resource $wm.binding.clipboard.history wm.binding.clipboard.history Ctrl+v
+bindsym $mod+$wm.binding.clipboard.history exec --no-startup-id regolith-clipboard pick -t $wm.text_pickers.ilia_stylesheet
+
+## Launch // Delete from Clipboard History // <><Ctrl><Shift> v ##
+set_from_resource $wm.binding.clipboard.delete wm.binding.clipboard.delete Ctrl+Shift+v
+bindsym $mod+$wm.binding.clipboard.delete exec --no-startup-id regolith-clipboard delete -t $wm.text_pickers.ilia_stylesheet
+
+## Launch // Clear Clipboard History // <><Ctrl><Shift> Delete ##
+set_from_resource $wm.binding.clipboard.clear wm.binding.clipboard.clear Ctrl+Shift+Delete
+bindsym $mod+$wm.binding.clipboard.clear exec --no-startup-id regolith-clipboard clear -t $wm.text_pickers.ilia_stylesheet
+
+## Launch // Emoji Picker // <><Ctrl> e ##
+set_from_resource $wm.binding.emoji wm.binding.emoji Ctrl+e
+bindsym $mod+$wm.binding.emoji exec --no-startup-id regolith-emoji -t $wm.text_pickers.ilia_stylesheet
