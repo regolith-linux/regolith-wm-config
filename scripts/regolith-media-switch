@@ -1,0 +1,653 @@
+#!/usr/bin/python3
+"""Sound device and media player keys of both sessions (65_media_switch).
+
+  regolith-media-switch output      make the next sound output the default
+  regolith-media-switch input       make the next sound input the default
+  regolith-media-switch player      put the next media player in charge
+  regolith-media-switch track       keep track of the player in charge
+                                    (started with the session)
+
+Each press steps from the current choice to the next one, wrapping around
+from the last to the first, and names the new choice in a desktop
+notification. Each kind keeps a single notification: its id is kept in the
+session's runtime directory and passed back as replaces_id, so a press
+replaces the previous message, also when it comes from another process.
+Presses of one kind are handled one at a time, in the order they were made,
+each starting from the current state.
+
+Outputs and inputs are the sinks and sources of the PulseAudio compatible
+sound server, in its list order (ascending index); the monitors of outputs
+are not inputs. A press starts from the server's default at that moment, and
+goes to the first device when the default isn't listed. Only the default
+changes: the sound server moves the streams that follow the default along,
+streams sent to one particular device stay there, and no volume or mute
+state is touched.
+
+Players are the MPRIS players on the session bus, in the order of their bus
+names. The player in charge is the one most recently chosen here, or that
+last started, paused, stopped or changed track; when it leaves, the one of
+those before it that is still there takes over. The track process keeps
+playerctld's active player on it, so the player keys of both sessions, which
+go through playerctl, act on it. When the player in charge was playing, the
+press pauses it and starts the new one, and waits for each to report its new
+state, so that a late report does not take the new player out of charge.
+"""
+
+import fcntl
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+PROG = "regolith-media-switch"
+
+DBUS = "org.freedesktop.DBus"
+DBUS_PATH = "/org/freedesktop/DBus"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+
+MPRIS_PREFIX = "org.mpris.MediaPlayer2."
+MPRIS_PATH = "/org/mpris/MediaPlayer2"
+MPRIS_IFACE = "org.mpris.MediaPlayer2"
+PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
+# playerctld owns a name under the MPRIS prefix, but it is not a player.
+PLAYERCTLD = "org.mpris.MediaPlayer2.playerctld"
+PLAYERCTLD_IFACE = "com.github.altdesktop.playerctld"
+
+# Some players (browsers among them) report a new playing state up to half a
+# second after acting on a request.
+REPORT_TIMEOUT = 1.5
+
+
+def warn(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+
+
+def state_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        base = os.environ.get("XDG_CACHE_HOME") or \
+            os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(base, PROG)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+# ------------------------------------------------------------------ queue
+#
+# Every press holds a lock on a turn file of its own for as long as it runs,
+# and waits for the lock of the press made just before it. A press waits for
+# exactly one other, so the presses of a kind run in the order they were
+# made, which a single shared lock does not guarantee.
+
+def join_queue(kind):
+    """Return this press's turn file and the previous press's, if any."""
+    directory = state_dir()
+    own = os.path.join(directory, "%s.%d.%d.turn"
+                       % (kind, os.getpid(), time.monotonic_ns()))
+    turn = os.open(own, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                   0o600)
+    fcntl.flock(turn, fcntl.LOCK_EX)  # held until the process ends
+    fd = os.open(os.path.join(directory, kind + ".queue"),
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    with os.fdopen(fd, "r+", encoding="utf-8") as queue:
+        fcntl.flock(queue, fcntl.LOCK_EX)
+        previous = queue.read().strip()
+        queue.seek(0)
+        queue.truncate()
+        queue.write(own + "\n")
+    return own, previous
+
+
+class Expired(Exception):
+    pass
+
+
+def expired(_signum, _frame):
+    raise Expired()
+
+
+def wait_turn(previous):
+    """Wait until the previous press is done."""
+    if not previous:
+        return
+    try:
+        fd = os.open(previous, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return  # done already
+    # A press stuck elsewhere must not block the key for good.
+    signal.signal(signal.SIGALRM, expired)
+    signal.alarm(30)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except Expired:
+        warn("the previous press is taking too long; going ahead")
+    finally:
+        signal.alarm(0)
+        os.close(fd)
+    # Normally gone already; left behind when that press was killed.
+    remove(previous)
+
+
+def remove(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def step(choices, current):
+    """The choice after current, wrapping around; the first if current is
+    not among the choices."""
+    if current in choices:
+        return choices[(choices.index(current) + 1) % len(choices)]
+    return choices[0]
+
+
+def read_int(path, default=0):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return default
+
+
+def write_int(path, value):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("%d\n" % value)
+    os.replace(tmp, path)
+
+
+# The GI imports take a moment: they come after joining the queue, and run
+# while the previous press is still being handled.
+def gio():
+    global Gio, GLib
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib  # noqa: F401
+
+
+def call(bus, name, path, iface, method, args=None, reply=None,
+         auto_start=False, timeout=5000):
+    flags = Gio.DBusCallFlags.NONE if auto_start else \
+        Gio.DBusCallFlags.NO_AUTO_START
+    result = bus.call_sync(name, path, iface, method, args,
+                           GLib.VariantType(reply) if reply else None,
+                           flags, timeout, None)
+    return result.unpack() if result is not None else ()
+
+
+def get_property(bus, name, iface, prop, auto_start=False):
+    return call(bus, name, MPRIS_PATH, PROPERTIES, "Get",
+                GLib.Variant("(ss)", (iface, prop)), "(v)",
+                auto_start=auto_start)[0]
+
+
+def notify(slot, summary, body="", icon=""):
+    """Show the kind's notification, replacing its previous one."""
+    path = os.path.join(state_dir(), slot + ".notification")
+    replaces = read_int(path)
+    if not 0 < replaces < 2 ** 32:
+        replaces = 0
+    hints = {
+        "transient": GLib.Variant("b", True),
+        "x-canonical-private-synchronous": GLib.Variant("s", PROG + "-" + slot),
+        "x-dunst-stack-tag": GLib.Variant("s", PROG + "-" + slot),
+    }
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        nid = call(bus, "org.freedesktop.Notifications",
+                   "/org/freedesktop/Notifications",
+                   "org.freedesktop.Notifications", "Notify",
+                   GLib.Variant("(susssasa{sv}i)",
+                                ("Regolith", replaces, icon, summary, body,
+                                 [], hints, -1)), "(u)")[0]
+    except GLib.Error as err:
+        warn("cannot show the notification: %s" % err.message)
+        return
+    write_int(path, nid)
+
+
+# ------------------------------------------------------------ sound devices
+
+class SoundError(Exception):
+    pass
+
+
+def run(argv):
+    try:
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise SoundError("cannot run %s: %s" % (argv[0], err))
+    if done.returncode != 0:
+        raise SoundError(done.stderr.strip() or
+                         "%s failed" % " ".join(argv))
+    return done.stdout
+
+
+def pactl(*args):
+    return run(["pactl"] + list(args))
+
+
+def listing(what):
+    """pactl's list of sinks, sources, sink-inputs or source-outputs."""
+    return json.loads(pactl("--format=json", "list", what))
+
+
+def is_monitor(source):
+    """Whether a source (as pactl lists it) is the monitor of an output."""
+    if source.get("properties", {}).get("device.class") == "monitor":
+        return True
+    # pactl names the monitored sink in the "monitor_source" field.
+    return source.get("monitor_source") not in (None, "", "n/a")
+
+
+def keep_in_place(kind, device):
+    """Keep the streams sent to the device in use on it.
+
+    A stream that asked for one device stays on it. pipewire-pulse, unlike
+    PulseAudio, lets the stream follow the default when the device it asked
+    for is the default, so the stream is held on its device here the way
+    pipewire-pulse holds a stream moved there: with the target.node and
+    target.object metadata of the stream's node. Recordings of an output's
+    monitor are held when the output switches. Without pipewire-pulse the
+    streams have no target.object, and nothing is done.
+    """
+    props = device.get("properties", {})
+    node, serial = props.get("object.id"), props.get("object.serial")
+    if node is None or serial is None:
+        return
+    # A stream names its device by node name or serial; a recording of a
+    # monitor names the output. pipewire-pulse lists the device a stream is
+    # on by its serial, the monitor of an output included.
+    names = {props.get("node.name"), serial}
+    lists = (("sink-inputs", "sink"), ("source-outputs", "source"))
+    for what, on in (lists if kind == "output" else lists[1:]):
+        for stream in listing(what):
+            stream_props = stream.get("properties", {})
+            if stream_props.get("target.object") not in names or \
+                    str(stream.get(on)) != serial or \
+                    "object.id" not in stream_props:
+                continue
+            for key, value in (("target.node", node),
+                               ("target.object", serial)):
+                try:
+                    run(["pw-metadata", stream_props["object.id"], key, value,
+                         "Spa:Id"])
+                except SoundError as err:
+                    warn("cannot keep stream %s on %s: %s"
+                         % (stream.get("index"), device["name"], err))
+                    break
+
+
+def describe(device):
+    description = device.get("description") or device["name"]
+    if device.get("mute"):
+        return "%s (muted)" % description
+    return description
+
+
+ICONS = {
+    ("output", False): "audio-speakers-symbolic",
+    ("output", True): "audio-volume-muted-symbolic",
+    ("input", False): "audio-input-microphone-symbolic",
+    ("input", True): "microphone-sensitivity-muted-symbolic",
+}
+
+
+def sound_device(kind):
+    noun = "sink" if kind == "output" else "source"
+    summary = "Sound " + kind
+    try:
+        listed = sorted(listing(noun + "s"),
+                        key=lambda device: device["index"])
+        devices = [device for device in listed
+                   if kind == "output" or not is_monitor(device)]
+        if not devices:
+            notify(kind, summary, "No %s device" % kind, ICONS[kind, True])
+            return 0
+        current = pactl("get-default-" + noun).strip()
+        names = [device["name"] for device in devices]
+        chosen = devices[names.index(step(names, current))]
+        in_use = next((device for device in listed
+                       if device["name"] == current), None)
+        if in_use is not None and in_use is not chosen:
+            keep_in_place(kind, in_use)
+        # Set even when it is the default already: it becomes the device
+        # chosen by the user, which a device that comes back doesn't replace.
+        pactl("set-default-" + noun, chosen["name"])
+    except (SoundError, ValueError, KeyError) as err:
+        warn("cannot switch the sound %s: %s" % (kind, err))
+        return 1
+    notify(kind, summary, describe(chosen),
+           ICONS[kind, bool(chosen.get("mute"))])
+    return 0
+
+
+# ----------------------------------------------------------- media players
+#
+# The player in charge is kept by a tracker process, started with the
+# session: it orders the players by when they were last brought to the
+# front, and keeps playerctld's active player, which playerctl and so the
+# player keys act on, on the first of them. playerctld can only rotate its
+# players, which loses that order, so it can't be left to pick the next
+# player itself when the one in charge leaves.
+
+PLAYER_ICON = "multimedia-player-symbolic"
+
+# Changes that bring a player to the front: it started, paused or stopped, or
+# changed track.
+ACTIVITY = ("PlaybackStatus", "Metadata")
+
+TRACKER = "org.regolith.MediaSwitch"
+TRACKER_PATH = "/org/regolith/MediaSwitch"
+TRACKER_XML = """
+<node>
+  <interface name="org.regolith.MediaSwitch">
+    <method name="InCharge">
+      <arg name="player" type="s" direction="out"/>
+    </method>
+    <method name="PutInCharge">
+      <arg name="player" type="s" direction="in"/>
+    </method>
+  </interface>
+</node>
+"""
+
+
+def is_player(name):
+    return name.startswith(MPRIS_PREFIX) and name != PLAYERCTLD
+
+
+def has_owner(bus, name):
+    return call(bus, DBUS, DBUS_PATH, DBUS, "NameHasOwner",
+                GLib.Variant("(s)", (name,)), "(b)")[0]
+
+
+def name_owner(bus, name):
+    return call(bus, DBUS, DBUS_PATH, DBUS, "GetNameOwner",
+                GLib.Variant("(s)", (name,)), "(s)")[0]
+
+
+class Tracker:
+    """The players, the one in charge first (the track process)."""
+
+    def __init__(self, bus):
+        self.bus = bus
+        self.order = []    # well-known names, the player in charge first
+        self.owners = {}   # well-known name: unique name
+        self.states = {}   # unique name: the ACTIVITY properties
+
+    def start(self):
+        self.bus.signal_subscribe(DBUS, DBUS, "NameOwnerChanged", DBUS_PATH,
+                                  None, Gio.DBusSignalFlags.NONE,
+                                  self.owner_changed)
+        self.bus.signal_subscribe(None, PROPERTIES, "PropertiesChanged",
+                                  MPRIS_PATH, None, Gio.DBusSignalFlags.NONE,
+                                  self.properties_changed)
+        names = call(self.bus, DBUS, DBUS_PATH, DBUS, "ListNames", None,
+                     "(as)")[0]
+        # Started after the session, the tracker begins with playerctld's
+        # order, which follows the players' changes too.
+        try:
+            known = get_property(self.bus, PLAYERCTLD, PLAYERCTLD_IFACE,
+                                 "PlayerNames")
+        except GLib.Error:
+            known = []
+        for name in list(known) + sorted(names):
+            if is_player(name) and name in names and name not in self.owners:
+                try:
+                    self.add(name, name_owner(self.bus, name))
+                except GLib.Error:
+                    pass  # gone already
+        self.enforce()
+
+    def add(self, name, owner):
+        self.owners[name] = owner
+        if owner not in self.states:
+            try:
+                props = call(self.bus, owner, MPRIS_PATH, PROPERTIES, "GetAll",
+                             GLib.Variant("(s)", (PLAYER_IFACE,)), "(a{sv})",
+                             timeout=2000)[0]
+            except GLib.Error:
+                props = {}
+            self.states[owner] = {key: props.get(key) for key in ACTIVITY}
+        if name not in self.order:
+            self.order.append(name)
+
+    def remove(self, name):
+        owner = self.owners.pop(name, None)
+        if name in self.order:
+            self.order.remove(name)
+        if owner not in self.owners.values():
+            self.states.pop(owner, None)
+
+    def put_in_charge(self, name):
+        if name in self.order:
+            self.order.remove(name)
+            self.order.insert(0, name)
+
+    def enforce(self):
+        """Make the player in charge playerctld's active player."""
+        if not self.order:
+            return
+        wanted = self.order[0]
+        try:
+            names = get_property(self.bus, PLAYERCTLD, PLAYERCTLD_IFACE,
+                                 "PlayerNames", auto_start=True)
+            if wanted not in names:
+                return  # playerctld takes it in a moment, and says so
+            # Shift moves the active player to the back, and returns the
+            # player that is active next.
+            active = names[0]
+            for _ in names:
+                if active == wanted:
+                    return
+                active = call(self.bus, PLAYERCTLD, MPRIS_PATH,
+                              PLAYERCTLD_IFACE, "Shift", None, "(s)")[0]
+        except GLib.Error as err:
+            warn("cannot set playerctld's active player: %s" % err.message)
+
+    def owner_changed(self, _bus, _sender, _path, _iface, _signal, params):
+        name, old, new = params.unpack()
+        if name == PLAYERCTLD:
+            if new:
+                self.enforce()
+            return
+        if not is_player(name):
+            return
+        if old:
+            self.remove(name)
+        if new:
+            self.add(name, new)
+        self.enforce()
+
+    def properties_changed(self, _bus, sender, _path, _iface, _signal, params):
+        iface, changed, _invalidated = params.unpack()
+        if iface == PLAYERCTLD_IFACE:
+            self.enforce()  # playerctld picked another player
+            return
+        state = self.states.get(sender)
+        if iface != PLAYER_IFACE or state is None:
+            return  # not from a player: playerctld passes their changes on
+        activity = False
+        for key in ACTIVITY:
+            if key in changed and changed[key] != state[key]:
+                state[key] = changed[key]
+                activity = True
+        if activity:
+            for name, owner in list(self.owners.items()):
+                if owner == sender:
+                    self.put_in_charge(name)
+            self.enforce()
+
+    def method_call(self, _bus, _sender, _path, _iface, method, params,
+                    invocation):
+        if method == "InCharge":
+            invocation.return_value(
+                GLib.Variant("(s)", (self.order[0] if self.order else "",)))
+        elif method == "PutInCharge":
+            self.put_in_charge(params.unpack()[0])
+            self.enforce()
+            invocation.return_value(None)
+        else:
+            invocation.return_dbus_error(
+                "org.freedesktop.DBus.Error.UnknownMethod", method)
+
+
+def track():
+    """Keep track of the player in charge (the track process)."""
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    # Leaving the session bus (logout) ends the process.
+    bus.set_exit_on_close(True)
+    tracker = Tracker(bus)
+    node = Gio.DBusNodeInfo.new_for_xml(TRACKER_XML)
+    # register_object is deprecated from GLib 2.84 on, in favour of
+    # register_object_with_closures2, which older releases lack.
+    register = getattr(bus, "register_object_with_closures2", None) or \
+        bus.register_object
+    register(TRACKER_PATH, node.interfaces[0], tracker.method_call, None, None)
+    owned = call(bus, DBUS, DBUS_PATH, DBUS, "RequestName",
+                 GLib.Variant("(su)", (TRACKER, 4)), "(u)")[0]
+    if owned != 1:
+        return 0  # running already
+    tracker.start()
+    GLib.MainLoop().run()
+    return 0
+
+
+def start_tracker(bus):
+    """Start the tracker unless it is running; True once it answers."""
+    if has_owner(bus, TRACKER):
+        return True
+    # The session starts it; this covers a session that was running when
+    # the keys were installed.
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0]),
+                          "track"], stdin=subprocess.DEVNULL, cwd="/",
+                         start_new_session=True, close_fds=True)
+    except OSError as err:
+        warn("cannot start the player tracker: %s" % err)
+        return False
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if has_owner(bus, TRACKER):
+            return True
+        time.sleep(0.02)
+    warn("the player tracker did not start")
+    return False
+
+
+class StatusReports:
+    """The playing states a player reports from now on."""
+
+    def __init__(self, bus, name):
+        self.bus = bus
+        self.status = None
+        self.subscription = bus.signal_subscribe(
+            name_owner(bus, name), PROPERTIES, "PropertiesChanged",
+            MPRIS_PATH, PLAYER_IFACE, Gio.DBusSignalFlags.NONE, self.changed)
+
+    def changed(self, _bus, _sender, _path, _iface, _signal, params):
+        status = params.unpack()[1].get("PlaybackStatus")
+        if status is not None:
+            self.status = status
+
+    def wait(self, accept):
+        """Wait until the player reports a state that accept() takes."""
+        context = GLib.MainContext.default()
+        tick = GLib.timeout_add(50, lambda: True)
+        deadline = time.monotonic() + REPORT_TIMEOUT
+        try:
+            while not accept(self.status) and time.monotonic() < deadline:
+                context.iteration(True)
+        finally:
+            GLib.source_remove(tick)
+            self.bus.signal_unsubscribe(self.subscription)
+
+
+def media_player():
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    names = call(bus, DBUS, DBUS_PATH, DBUS, "ListNames", None, "(as)")[0]
+    present = sorted(name for name in names if is_player(name))
+    if not present:
+        notify("player", "Media player", "No media player", PLAYER_ICON)
+        return 0
+    tracked = start_tracker(bus)
+    previous = None
+    if tracked:
+        try:
+            previous = call(bus, TRACKER, TRACKER_PATH, TRACKER, "InCharge",
+                            None, "(s)")[0]
+        except GLib.Error as err:
+            warn("cannot ask for the player in charge: %s" % err.message)
+    chosen = step(present, previous)
+    starting = None
+    try:
+        if previous in present and previous != chosen and get_property(
+                bus, previous, PLAYER_IFACE, "PlaybackStatus") == "Playing":
+            # Hand playback over. The pause has to be reported before the new
+            # player starts: the report would put the old player back in
+            # charge.
+            pausing = StatusReports(bus, previous)
+            call(bus, previous, MPRIS_PATH, PLAYER_IFACE, "Pause")
+            pausing.wait(lambda status: status not in (None, "Playing"))
+            starting = StatusReports(bus, chosen)
+            call(bus, chosen, MPRIS_PATH, PLAYER_IFACE, "Play")
+    except GLib.Error as err:
+        warn("cannot hand playback over to %s: %s" % (chosen, err.message))
+    if tracked:
+        try:
+            call(bus, TRACKER, TRACKER_PATH, TRACKER, "PutInCharge",
+                 GLib.Variant("(s)", (chosen,)))
+        except GLib.Error as err:
+            warn("cannot put %s in charge: %s" % (chosen, err.message))
+    try:
+        identity = get_property(bus, chosen, MPRIS_IFACE, "Identity")
+    except GLib.Error:
+        identity = ""
+    notify("player", "Media player",
+           identity or chosen[len(MPRIS_PREFIX):], PLAYER_ICON)
+    if starting is not None:
+        # The next press must find the new player playing.
+        starting.wait(lambda status: status == "Playing")
+    return 0
+
+
+# ---------------------------------------------------------------- commands
+
+USAGE = "usage: regolith-media-switch output|input|player\n"
+
+COMMANDS = {
+    "output": lambda: sound_device("output"),
+    "input": lambda: sound_device("input"),
+    "player": media_player,
+}
+
+
+def main(argv):
+    if argv[1:] == ["track"]:
+        gio()
+        return track()
+    if len(argv) != 2 or argv[1] not in COMMANDS:
+        sys.stderr.write(USAGE)
+        return 2
+    kind = argv[1]
+    own, previous = join_queue(kind)
+    try:
+        gio()
+        wait_turn(previous)
+        return COMMANDS[kind]()
+    except GLib.Error as err:
+        warn(err.message)
+        return 1
+    finally:
+        remove(own)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

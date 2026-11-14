@@ -1,0 +1,29 @@
+###############################################################################
+# Player keys
+###############################################################################
+# As in the sway session, the player keys go through playerctl, which acts on
+# playerctld's active player: the one used last, or chosen with the keys in
+# 65_media_switch. They take the place of gnome-settings-daemon's player keys,
+# with the same actions: i3 grabs them before gnome-flashback-media-keys
+# starts. gnome-settings-daemon keeps the volume keys and the Media key.
+
+# The keycodes 172 and 208 are both bound to XF86AudioPlay but have different meanings
+bindcode 172 exec --no-startup-id playerctl play-pause
+bindcode 208 exec --no-startup-id playerctl play
+# XF86AudioPause is bound by its code (209): it is also the shifted symbol of
+# 172, so i3 would bind 172 to it as well
+bindcode 209 exec --no-startup-id playerctl pause
+bindsym XF86AudioNext exec --no-startup-id playerctl next
+bindsym XF86AudioPrev exec --no-startup-id playerctl previous
+bindsym XF86AudioStop exec --no-startup-id playerctl stop
+# With Ctrl, the same as without
+bindcode Ctrl+172 exec --no-startup-id playerctl play-pause
+bindcode Ctrl+208 exec --no-startup-id playerctl play
+bindsym Ctrl+XF86AudioNext exec --no-startup-id playerctl next
+bindsym Ctrl+XF86AudioPrev exec --no-startup-id playerctl previous
+# Rewind and Forward seek 10 s back and 45 s ahead
+bindsym XF86AudioRewind exec --no-startup-id playerctl position 10-
+bindsym XF86AudioForward exec --no-startup-id playerctl position 45+
+
+# Keep track of the active player
+exec --no-startup-id playerctld daemon
