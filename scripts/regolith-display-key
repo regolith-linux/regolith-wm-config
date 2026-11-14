@@ -40,21 +40,28 @@ The switcher cycles mirror (one logical monitor holding every screen), join
 (one logical monitor per screen, in a row), external only (the same without
 the panel) and built-in only (the panel alone). The layout in force is read
 from the grouping of the current state alone; a press puts the next layout
-that is possible in place. Mirror needs supports-mirroring, a size every
-screen has and a scale every chosen mode lists; the last two need a panel.
+that is possible in place. Mirror needs a size every screen has and a scale
+every chosen mode lists, and is passed over when the service reports
+supports-mirroring false. A service that leaves the property out, as GNOME
+Flashback does, counts as supporting it, as it does for Settings. External
+only and built-in only need a panel.
 Join and external only place each screen's preferred mode at its preferred
 scale left to right, the panel first and primary; with a global scale they
 share the scale mirror would use, and are passed over when there is none.
-Built-in only always uses the panel's own scale. The switcher does nothing
-while the lid is closed, and it leaves the panel key's memory alone.
+Built-in only always uses the panel's own scale. When the service refuses
+mirror for any reason other than a stale serial, the same press moves on to
+the next layout of the cycle that is possible, and mirror stays out for the
+rest of that press. The switcher does nothing while the lid is closed, and
+it leaves the panel key's memory alone.
 
 Changes last until the session ends; with --persistent true, which the partial
 passes from the wm.display.persistent resource, they are kept. When a request
 is refused because the service's state changed in between, the key works the
 press out again from the new state, as a new press would be (service,
-permission, lid, panel, screens and focused output are all read again),
-three attempts at most. When several reasons stop a press, the notification
-gives the first of: no service or changes not allowed; the lid (switching the
+permission, lid, panel, screens and focused output are all read again).
+Retries over a stale serial and the switcher's moves past a refused mirror
+share one limit: three attempts at most. When several reasons stop a press,
+the notification gives the first of: no service or changes not allowed; the lid (switching the
 panel on, and the switcher); no panel, nothing else active, or fewer than two
 screens; the focused output on no active screen.
 
@@ -424,7 +431,10 @@ class State:
         self.layout_mode = properties.get("layout-mode", LAYOUT_LOGICAL)
         self.global_scale = bool(properties.get("global-scale-required",
                                                 False))
-        self.mirroring = bool(properties.get("supports-mirroring", False))
+        # GNOME Flashback leaves supports-mirroring out. Settings counts a
+        # missing property as mirroring supported, and so do the keys; only
+        # an explicit false rules mirror out.
+        self.mirroring = bool(properties.get("supports-mirroring", True))
 
     def screen(self, connector):
         return next((screen for screen in self.screens
@@ -490,12 +500,14 @@ class Notice:
 
 
 class Change:
-    """An arrangement to apply, its notice, and what to keep once applied."""
+    """An arrangement to apply, its notice, what to keep once applied, and
+    the switcher layout it puts in place (None for the other keys)."""
 
-    def __init__(self, arrangement, notice, memory=None):
+    def __init__(self, arrangement, notice, memory=None, layout=None):
         self.arrangement = arrangement
         self.notice = notice
         self.memory = memory
+        self.layout = layout
 
 
 def switch_off(state, panel):
@@ -769,7 +781,11 @@ def unchanged(reason):
     return Notice("Display layout unchanged", reason)
 
 
-def display_switch(state):
+def display_switch(state, refused=None):
+    """The next layout of the cycle. refused maps the layouts the service
+    has already refused during this press to its error message; they are
+    passed over."""
+    refused = refused or {}
     if lid_closed():
         return unchanged("The lid is closed.")
     if len(state.screens) < 2:
@@ -777,14 +793,21 @@ def display_switch(state):
     panel = next((screen for screen in state.screens if screen.builtin), None)
     current = layout_in_force(state, panel)
     possible = possible_layouts(state, panel)
+    for layout in refused:
+        possible.pop(layout, None)
     layout = next_layout(current, possible)
+    why = "".join("The display configuration service refused %s: %s\n"
+                  % (name, message) for name, message in refused.items())
     if layout is None:
-        return unchanged("The connected screens offer no layout.")
+        return unchanged(why + "The connected screens offer no other layout."
+                         if why else "The connected screens offer no layout.")
     if layout == current:
-        return unchanged("No other layout can be used with the connected "
-                         "screens.")
-    return Change(possible[layout], Notice("Display layout: %s" % layout,
-                                           icon=DISPLAY_ICON))
+        return unchanged(why + "No other layout can be used with the "
+                         "connected screens.")
+    return Change(possible[layout],
+                  Notice("Display layout: %s" % layout, why.rstrip("\n"),
+                         DISPLAY_ICON),
+                  layout=layout)
 
 
 # ----------------------------------------------------------------- the buses
@@ -809,8 +832,14 @@ def call(bus, name, path, iface, method, args=None, reply=None):
 
 
 def error_text(err):
-    Gio.DBusError.strip_remote_error(err)
-    return err.message
+    """The error's message without the remote error name GDBus puts in front
+    (Gio.DBusError.strip_remote_error cannot change a Python GLib.Error)."""
+    message = err.message or ""
+    if message.startswith("GDBus.Error:"):
+        _name, separator, rest = message.partition(": ")
+        if separator:
+            message = rest
+    return message
 
 
 def current_state(bus):
@@ -950,7 +979,12 @@ def read_state(bus, state=None):
 def run(decide, method):
     """Work the press out from the current state and apply it. After a
     refusal over a stale serial the press is worked out again, from the
-    start, on the fresh state: three attempts in all, one notification."""
+    start, on the fresh state. After any other refusal of the switcher's
+    mirror, the press is worked out again on the same state with mirror
+    passed over. Three attempts in all, one notification.
+
+    decide(state, refused) returns a Change or a Notice; refused maps each
+    switcher layout the service refused during this press to its message."""
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     except GLib.Error as err:
@@ -959,11 +993,12 @@ def run(decide, method):
                       "The session bus cannot be reached."))
         return 1
     state = read_state(bus)
+    refused = {}
     for attempt in range(1, ATTEMPTS + 1):
         if isinstance(state, Notice):
             notify(state)
             return 1
-        change = decide(state)
+        change = decide(state, refused)
         if isinstance(change, Notice):
             notify(change)
             return 0
@@ -978,6 +1013,13 @@ def run(decide, method):
             if fresh.serial != state.serial and attempt < ATTEMPTS:
                 # Everything is read again, the permission included.
                 state = read_state(bus, fresh)
+                continue
+            if change.layout == MIRROR and attempt < ATTEMPTS:
+                # Not a stale serial: the service turned mirror down itself
+                # (a missing supports-mirroring only counts as support). The
+                # press moves on to the next layout of the cycle.
+                warn("mirror was refused: %s" % message)
+                refused[MIRROR] = message
                 continue
             warn("the change was refused: %s" % message)
             notify(Notice("Display change refused", message))
@@ -1065,11 +1107,11 @@ def main(argv):
     wait_for_earlier_presses()
     take_turn()
     if args.command == "laptop-display":
-        return run(laptop_display, method)
+        return run(lambda state, _refused: laptop_display(state), method)
     if args.command == "switch":
         return run(display_switch, method)
     up = args.direction == "up"
-    return run(lambda state: step_scale(state, up), method)
+    return run(lambda state, _refused: step_scale(state, up), method)
 
 
 if __name__ == "__main__":

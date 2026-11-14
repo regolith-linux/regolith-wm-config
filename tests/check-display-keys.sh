@@ -8,7 +8,11 @@
 #   panel leaves, adds it back at the right edge, steps scales within the
 #   stated tolerance and shows them as whole percentages;
 # - the switcher recognises the layout in force, skips what cannot be put in
-#   place, and builds mirror, join, external only and built-in only.
+#   place, and builds mirror, join, external only and built-in only;
+# - mirror is offered when the service leaves supports-mirroring out and
+#   skipped when it reports false, and a press whose mirror request is
+#   refused (serial still current) moves on to the next layout, within three
+#   attempts and one notification.
 # Run from the top of the source tree (debian/rules runs it at build time).
 set -eu
 
@@ -183,8 +187,10 @@ def hd(name, builtin=False):
                   builtin)
 
 def three(logicals, mirroring=True):
-    return d.State((7, [hd("A"), hd("P", True), hd("B")], logicals,
-                    {"layout-mode": 1, "supports-mirroring": mirroring}))
+    properties = {"layout-mode": 1}
+    if mirroring is not None:  # None: the property is left out
+        properties["supports-mirroring"] = mirroring
+    return d.State((7, [hd("A"), hd("P", True), hd("B")], logicals, properties))
 
 def members(*names):
     return [(n, "vendor", "product", n + "-serial") for n in names]
@@ -216,9 +222,14 @@ mirror = three([(0, 0, 1.0, 0, True, members("A", "P", "B"), {})])
 check("mirror is followed by join, the panel first",
       names(switched(mirror)),
       [(0, True, ["P"]), (1920, False, ["A"]), (3840, False, ["B"])])
-check("without supports-mirroring built-in only goes to join",
+check("with supports-mirroring false built-in only goes to join",
       names(switched(three([group(0, "P", True)], mirroring=False)))[0],
       (0, True, ["P"]))
+check("without supports-mirroring (GNOME Flashback) built-in only goes to "
+      "mirror", names(switched(three([group(0, "P", True)], mirroring=None))),
+      [(0, True, ["A", "P", "B"])])
+check("a missing supports-mirroring counts as supported",
+      three([], mirroring=None).mirroring, True)
 odd = three([group(0, "A", True)])
 check("an unknown arrangement starts at the first possible layout",
       d.layout_in_force(odd, odd.screens[1]) is None
@@ -270,6 +281,83 @@ check("the lid is reported before the screen count",
       "lid" in (one.summary + one.body).lower(), True)
 check("the lid is reported before a missing panel",
       "lid" in (nopan.summary + nopan.body).lower(), True)
+
+# A press against a stand-in service: apply() answers from a script of
+# outcomes, and the serial moves only on a stale refusal.
+import types
+d.gio()
+GLib = d.GLib
+d.Gio = types.SimpleNamespace(bus_get_sync=lambda *_a: object(),
+                              BusType=d.Gio.BusType)
+d.lid_closed = lambda: False
+
+def press(make, outcomes, decide=d.display_switch):
+    """make(serial) builds the service's state. outcomes, per apply call:
+    None accepts, "stale" refuses with a new serial, any other text refuses
+    with the serial unchanged."""
+    serial = [7]
+    applied, notices = [], []
+    def apply(_bus, _serial, _method, arrangement):
+        outcome = outcomes[len(applied)] if len(applied) < len(outcomes) else None
+        applied.append([[n for n, _m in it.screens] for it in arrangement])
+        if outcome == "stale":
+            serial[0] += 1
+        if outcome is not None:
+            raise GLib.Error(outcome)
+    d.current_state = lambda _bus: make(serial[0])
+    d.apply_allowed = lambda _bus: True
+    d.apply = apply
+    d.notify = notices.append
+    with contextlib.redirect_stderr(io.StringIO()):
+        rc = d.run(decide, d.METHOD_TEMPORARY)
+    return rc, applied, [(n.summary, n.body) for n in notices]
+
+MIRRORED = [["A", "P", "B"]]
+JOINED = [["P"], ["A"], ["B"]]
+
+def flashback(serial):  # GNOME Flashback's properties, panel alone
+    return d.State((serial, [hd("A"), hd("P", True), hd("B")],
+                    [group(0, "P", True)],
+                    {"layout-mode": 2, "global-scale-required": True}))
+
+rc, applied, notices = press(flashback, ["Mirroring is not possible"])
+check("a refused mirror moves on to join within the same press",
+      (rc, applied), (0, [MIRRORED, JOINED]))
+check("the fall-through shows one notification naming join and the refusal",
+      notices, [("Display layout: join", "The display configuration service "
+                 "refused mirror: Mirroring is not possible")])
+check("the remote error name is left out of the message",
+      d.error_text(GLib.Error("GDBus.Error:org.freedesktop.DBus.Error."
+                              "InvalidArgs: mirroring is not supported")),
+      "mirroring is not supported")
+rc, applied, notices = press(flashback, ["no", "no"])
+check("a refused join after a refused mirror is reported as refused",
+      (rc, applied, [summary for summary, _b in notices]),
+      (1, [MIRRORED, JOINED], ["Display change refused"]))
+rc, applied, notices = press(flashback, ["stale", "stale", "no"])
+check("stale retries and the mirror fall-through share three attempts",
+      (rc, len(applied), [summary for summary, _b in notices]),
+      (1, 3, ["Display change refused"]))
+rc, applied, notices = press(flashback, ["stale", "no"])
+check("after a stale retry a refused mirror still moves on to join",
+      (rc, applied, len(notices)), (0, [MIRRORED, MIRRORED, JOINED], 1))
+
+def no_panel(serial):  # only mirror and join are possible
+    return d.State((serial, [hd("A"), hd("B")],
+                    [group(0, "A", True), group(1920, "B")], {"layout-mode": 2}))
+
+rc, applied, notices = press(no_panel, ["Mirroring is not possible"])
+check("a refused mirror with only join left keeps the layout and says why",
+      (rc, applied, [(summary, "refused mirror" in body)
+                     for summary, body in notices]),
+      (0, [[["A", "B"]]], [("Display layout unchanged", True)]))
+rc, applied, notices = press(
+    lambda serial: state([logical(0, 0, 1.0, "A"),
+                          logical(1920, 0, 1.0, "P", True)]),
+    ["no"], lambda st, _refused: d.laptop_display(st))
+check("the other keys report a refusal at once",
+      (rc, len(applied), [summary for summary, _b in notices]),
+      (1, 1, ["Display change refused"]))
 sys.exit(bad)
 PY
 
