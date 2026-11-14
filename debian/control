@@ -44,6 +44,7 @@ Depends: ${misc:Depends},
   regolith-i3-dbus-activation
 Recommends: regolith-i3-compositor,
   regolith-wm-quick-toggles,
+  regolith-wm-brightness,
   regolith-i3-control-center-default | regolith-i3-control-center,
   regolith-i3-wallpaper-folder,
   regolith-i3-default-style,
@@ -385,6 +386,7 @@ Depends: ${misc:Depends},
   python3,
   python3-gi,
   regolith-avizo,
+  regolith-wm-brightness,
   regolith-wm-config
 Description: Configuration for providing media key functionality
 
@@ -535,3 +537,17 @@ Breaks: regolith-powerd (<< 0.8.0)
 Description: Quick toggle keys for i3 and sway
  Keybindings that switch stay awake, the touchpad and Night Light, and in
  sway the keyboard backlight.
+
+Package: regolith-wm-brightness
+Architecture: any
+Depends: ${misc:Depends},
+  regolith-wm-config,
+  brightnessctl,
+  gir1.2-glib-2.0,
+  python3,
+  python3-gi
+Recommends: ddcutil
+Description: Brightness keys for the built-in panel and external screens
+ Keybindings for i3 and sway that change the brightness of the built-in
+ panel and of every external screen over DDC/CI, and show the new level in
+ the session's on-screen display.

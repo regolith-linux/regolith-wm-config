@@ -1,0 +1,692 @@
+#!/usr/bin/python3
+"""The brightness service of the Regolith sessions, which they start
+(65_brightness_keybindings in i3, 65_media_keybindings in sway).
+
+  regolith-brightnessd [--step PERCENT] [--exclude LIST]
+
+The brightness keys hand their presses to it with regolith-brightness.
+
+A press steps the built-in panel and every external screen by PERCENT
+percent (wm.media.brightness.step, 5 by default) and shows the new level in
+the session's indicator: avizo in sway, GNOME Flashback's OSD in X11. The
+built-in panel is the first device of class backlight, stepped with
+brightnessctl (LEDs are never touched); when the user may not write the
+backlight, the value brightnessctl computes is set through logind, as GNOME
+does. External screens are the displays
+"ddcutil detect" finds, reached over DDC/CI (VCP feature 0x10) and stepped
+by the same share of their own range. Screens whose model name or serial
+number is in LIST (wm.media.brightness.ddc.exclude, comma-separated) are
+left alone. The indicator shows the built-in panel, or without one the
+external screen with the lowest display number.
+
+DDC/CI is slow, so one process runs for the session: it takes the presses
+in the order they were made and drives each screen from its own thread,
+one ddcutil command at a time. Presses that come while a command runs only
+move the screen's target; when the command ends, one write carries the
+latest target. A press that finds a screen idle starts from the value the
+screen reports, so changes made with the screen's own buttons count.
+Screens don't wait for each other, and neither the panel nor the indicator
+waits for a screen whose level is already known.
+
+Screens are looked for at the first press, and again only at the next press
+after the window manager's active outputs changed or a screen failed twice
+in a row. They are addressed by I2C bus number: selecting a screen any other
+way makes ddcutil scan every bus first. A failed command is tried once more,
+a write with the latest target. A screen whose first read after a look fails
+(usually one without brightness control) is skipped until the next look.
+The service ends with the window manager.
+"""
+
+import fcntl
+import json
+import os
+import queue
+import re
+import subprocess
+import sys
+import threading
+import time
+
+PROG = "regolith-brightnessd"
+DEFAULT_STEP = 5
+
+SHELL = "org.gnome.Shell"
+SHELL_PATH = "/org/gnome/Shell"
+BRIGHTNESS_ICON = "display-brightness-symbolic"
+
+LOGIND = "org.freedesktop.login1"
+LOGIND_SESSION = "/org/freedesktop/login1/session/auto"
+
+
+def warn(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+
+
+def state_dir():
+    """The service's directory, where regolith-brightness finds its pipe."""
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        base = os.environ.get("XDG_CACHE_HOME") or \
+            os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "regolith-brightness")
+
+
+def run(argv, timeout):
+    """Run a command; return its exit status and output (1 if it can't run)."""
+    try:
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                              capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return 1, "", str(err)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+# GI is loaded only for the X11 session's OSD, and for logind.
+def gio():
+    global Gio, GLib
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib  # noqa: F401
+
+
+# ------------------------------------------------------------------ levels
+
+def round_half_up(numerator, denominator):
+    return (2 * numerator + denominator) // (2 * denominator)
+
+
+def raw_step(step, maximum):
+    """A screen's raw change for one press: step percent of its range."""
+    return max(1, round_half_up(step * maximum, 100))
+
+
+def percent(value, maximum):
+    return round_half_up(100 * value, maximum)
+
+
+def avizo_image(level):
+    # The thresholds of avizo's lightctl
+    if level <= 33:
+        return "brightness_low"
+    if level <= 66:
+        return "brightness_medium"
+    return "brightness_high"
+
+
+# ----------------------------------------------------------------- ddcutil
+
+def parse_detect(text):
+    """The valid displays in "ddcutil detect --brief" output.
+
+    Return a list of (number, bus, model, serial). "Invalid display" blocks
+    (laptop panels, screens without DDC/CI) and displays without an I2C bus
+    (USB) are left out.
+    """
+    displays = []
+    current = None
+    for line in text.splitlines():
+        if line[:1].strip():
+            match = re.fullmatch(r"Display (\d+)", line.strip())
+            current = {"number": int(match.group(1)), "bus": None,
+                       "model": "", "serial": ""} if match else None
+            if current is not None:
+                displays.append(current)
+            continue
+        if current is None:
+            continue
+        key, _, value = line.strip().partition(":")
+        value = value.strip()
+        if key == "I2C bus":
+            match = re.fullmatch(r"/dev/i2c-(\d+)", value)
+            if match:
+                current["bus"] = int(match.group(1))
+        elif key == "Monitor" and value.count(":") >= 2:
+            # mfg:model:serial; a model name may itself hold a colon
+            model_serial = value.split(":", 1)[1]
+            current["model"], current["serial"] = \
+                (part.strip() for part in model_serial.rsplit(":", 1))
+    return [(d["number"], d["bus"], d["model"], d["serial"])
+            for d in displays if d["bus"] is not None]
+
+
+def parse_getvcp(text):
+    """(current, maximum) from "ddcutil getvcp 10 --brief", or None."""
+    match = re.search(r"^VCP 10 C (\d+) (\d+)$", text, re.MULTILINE)
+    if not match or int(match.group(2)) <= 0:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def ddcutil(bus, *args):
+    rc, out, err = run(["ddcutil", "--bus", str(bus)] + list(args),
+                       timeout=60)
+    return rc, out, (err or out).strip()
+
+
+# ------------------------------------------------------------------- press
+
+PENDING = object()
+
+
+class Press:
+    """One key press, and the level each display reached with it."""
+
+    def __init__(self, direction, step):
+        self.direction = direction
+        self.step = step
+        self._cond = threading.Condition()
+        self._panel = PENDING
+        self._screens = None
+        self._levels = {}
+
+    def report_panel(self, level):
+        with self._cond:
+            self._panel = level
+            self._cond.notify_all()
+
+    def report_screens(self, screens):
+        with self._cond:
+            self._screens = screens
+            self._cond.notify_all()
+
+    def report(self, screen, level):
+        with self._cond:
+            self._levels[screen] = level
+            self._cond.notify_all()
+
+    def level(self):
+        """The level to show: the panel's, or the first screen's with one."""
+        with self._cond:
+            self._cond.wait_for(lambda: self._panel is not PENDING)
+            if self._panel is not None:
+                return self._panel
+            self._cond.wait_for(lambda: self._screens is not None)
+            for screen in self._screens:
+                self._cond.wait_for(lambda: screen in self._levels)
+                if self._levels[screen] is not None:
+                    return self._levels[screen]
+        return None
+
+
+# ---------------------------------------------------------------- arrivals
+
+# regolith-brightness, or the shell the window manager runs it with
+KEY_COMMAND = re.compile(rb"(^|[\s/])regolith-brightness (up|down)$")
+
+
+def key_process(pid):
+    """Whether process pid is a press on its way."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as fh:
+            command = fh.read().rstrip(b"\0").replace(b"\0", b" ")
+    except OSError:
+        return False
+    return KEY_COMMAND.search(command) is not None
+
+
+class Arrivals:
+    """The presses, in the order the window manager started them.
+
+    Every press is a process of its own, so with quick presses or key repeat
+    a later one can reach the service first. Process IDs are handed out in
+    order, and each press comes with the ID of the shell the window manager
+    started for it (its parent) and its own. A press is held while a key
+    process with a lower ID, started after the last press taken, is still on
+    its way (a second at most).
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._held = {}             # direction by (parent ID, process ID)
+        self._last = (os.getpid(), 0)
+
+    def put(self, key, direction):
+        with self._cond:
+            self._held[key] = direction
+            self._cond.notify()
+
+    def get(self):
+        """The direction of the next press."""
+        with self._cond:
+            self._cond.wait_for(lambda: self._held)
+            deadline = time.monotonic() + 1
+            while True:
+                key = min(self._held)
+                # Lower than the last one: from before the service started,
+                # or the IDs wrapped around.
+                if key < self._last or time.monotonic() > deadline or \
+                        not self._on_the_way(key[0]):
+                    break
+                self._cond.wait(0.01)
+            self._last = max(self._last, key)
+            return self._held.pop(key)
+
+    def _on_the_way(self, below):
+        return any(entry.isdigit() and self._last[0] < int(entry) < below
+                   and key_process(int(entry))
+                   for entry in os.listdir("/proc"))
+
+
+# --------------------------------------------------------------- the panel
+
+def parse_panel(text):
+    """(device, class, value, level) from "brightnessctl -m" output, or None."""
+    fields = text.strip().split(",")
+    if len(fields) == 5 and fields[2].isdigit() and \
+            fields[3].endswith("%") and fields[3][:-1].isdigit():
+        return fields[0], fields[1], int(fields[2]), int(fields[3][:-1])
+    return None
+
+
+class Panel(threading.Thread):
+    """Steps the built-in panel, one press after the other."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.presses = queue.Queue()
+        self._system_bus = None
+
+    def run(self):
+        while True:
+            press = self.presses.get()
+            press.report_panel(self.step(press))
+
+    def step(self, press):
+        """Step the panel; return its new level, or None without a panel."""
+        change = "%d%%%s" % (press.step, "+" if press.direction > 0 else "-")
+        # With -m, set prints the device as "info" does; the level is the
+        # fourth field. It fails when there is no backlight device.
+        rc, out, _err = run(["brightnessctl", "-m", "--class=backlight",
+                             "set", change], timeout=10)
+        if rc == 0:
+            panel = parse_panel(out)
+            return panel[3] if panel else None
+        # brightnessctl writes the backlight itself and fails when the user
+        # may not (not in the video group, as on Ubuntu). The value it would
+        # set (--pretend) then goes through logind, as in GNOME.
+        rc, out, _err = run(["brightnessctl", "-m", "--pretend",
+                             "--class=backlight", "set", change], timeout=10)
+        panel = parse_panel(out) if rc == 0 else None
+        if panel is None or not self.set_through_logind(*panel[:3]):
+            return None
+        return panel[3]
+
+    def set_through_logind(self, device, subsystem, value):
+        """Set a backlight with logind's Session.SetBrightness."""
+        try:
+            gio()
+        except (ImportError, ValueError) as err:
+            warn("cannot set the brightness of the built-in panel: %s" % err)
+            return False
+        try:
+            if self._system_bus is None:
+                self._system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self._system_bus.call_sync(
+                LOGIND, LOGIND_SESSION, LOGIND + ".Session", "SetBrightness",
+                GLib.Variant("(ssu)", (subsystem, device, value)), None,
+                Gio.DBusCallFlags.NONE, 5000, None)
+        except GLib.Error as err:
+            warn("cannot set the brightness of the built-in panel: %s"
+                 % err.message)
+            return False
+        return True
+
+
+# ----------------------------------------------------------------- screens
+
+class Screen(threading.Thread):
+    """An external screen, by I2C bus, driven one command at a time.
+
+    A change starts with a press that finds the screen idle: the screen's
+    value is read, the presses that came meanwhile are applied in order,
+    and the target is written. Presses during the write move the target,
+    and the latest target is written when the write ends. The change ends
+    when the screen has the latest target, or when a command failed twice.
+    """
+
+    def __init__(self, service, bus):
+        super().__init__(daemon=True)
+        self.service = service
+        self.bus = bus
+        self.number = 0
+        self._cond = threading.Condition()
+        self._waiting = []      # presses of a change whose value is unknown
+        self._target = None     # the target of a change, once value known
+        self._maximum = None
+        self._probed = False    # read since the last look
+        self._skipped = False
+        self._gone = False
+
+    def found(self, number):
+        """Found by a fresh look, as display number."""
+        with self._cond:
+            self.number = number
+            self._probed = False
+            self._skipped = False
+
+    def retire(self):
+        """Gone after a fresh look: no more commands."""
+        with self._cond:
+            self._gone = True
+            waiting, self._waiting = self._waiting, []
+            self._cond.notify()
+        for press in waiting:
+            press.report(self, None)
+
+    def press(self, press):
+        with self._cond:
+            if self._gone or self._skipped:
+                level = None
+            elif self._target is not None:
+                self._target = self._stepped(self._target, press)
+                level = percent(self._target, self._maximum)
+            else:
+                self._waiting.append(press)
+                self._cond.notify()
+                return
+        press.report(self, level)
+
+    def _stepped(self, value, press):
+        value += press.direction * raw_step(press.step, self._maximum)
+        return max(0, min(self._maximum, value))
+
+    def _drop_waiting(self, skip):
+        """End a change whose value couldn't be read."""
+        with self._cond:
+            self._skipped = self._skipped or skip
+            waiting, self._waiting = self._waiting, []
+        for press in waiting:
+            press.report(self, None)
+
+    def run(self):
+        while True:
+            with self._cond:
+                self._cond.wait_for(lambda: self._waiting or self._gone)
+                if self._gone:
+                    return
+                probe = not self._probed
+                self._probed = True
+            value = self._read(probe)
+            if value is None:
+                self._drop_waiting(skip=probe)
+                continue
+            current, maximum = value
+            reports = []
+            with self._cond:
+                if self._gone:
+                    return
+                self._maximum = maximum
+                target = current
+                for press in self._waiting:
+                    target = self._stepped(target, press)
+                    reports.append((press, percent(target, maximum)))
+                self._waiting = []
+                self._target = target
+            for press, level in reports:
+                press.report(self, level)
+            self._write_target(current)
+
+    def _read(self, probe):
+        """(current, maximum), or None after one try (probe) or two."""
+        for _ in range(1 if probe else 2):
+            rc, out, err = ddcutil(self.bus, "getvcp", "10", "--brief")
+            value = parse_getvcp(out) if rc == 0 else None
+            if value is not None:
+                return value
+        if not probe:
+            self._failed("cannot read", err)
+        return None
+
+    def _write_target(self, value):
+        """Write the latest target until the screen has it (value now)."""
+        failed = False
+        while True:
+            with self._cond:
+                if self._gone:
+                    return
+                if self._target == value and not failed:
+                    self._target = None
+                    return
+                value = self._target
+            rc, _out, err = ddcutil(self.bus, "setvcp", "10", str(value))
+            if rc != 0 and failed:
+                with self._cond:
+                    self._target = None
+                self._failed("cannot set", err)
+                return
+            failed = rc != 0
+
+    def _failed(self, what, err):
+        warn("%s the brightness of the screen on I2C bus %d: %s"
+             % (what, self.bus, err or "ddcutil failed"))
+        self.service.look_again()
+
+
+# --------------------------------------------------------------- indicator
+
+class Indicator(threading.Thread):
+    """Shows the level of each press, in the order of the presses."""
+
+    def __init__(self, sway):
+        super().__init__(daemon=True)
+        self.sway = sway
+        self.presses = queue.Queue()
+        self._bus = None
+
+    def run(self):
+        while True:
+            level = self.presses.get().level()
+            if level is None:
+                continue
+            if self.sway:
+                rc, _out, err = run(
+                    ["avizo-client", "--image-resource=" + avizo_image(level),
+                     "--progress=%.2f" % (level / 100)], timeout=10)
+                if rc != 0:
+                    warn("avizo-client failed: %s" % err.strip())
+            else:
+                self._show_osd(level)
+
+    def _show_osd(self, level):
+        """GNOME Flashback's brightness OSD."""
+        try:
+            if self._bus is None:
+                self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            params = {"icon": GLib.Variant("s", BRIGHTNESS_ICON),
+                      "level": GLib.Variant("d", level / 100)}
+            self._bus.call_sync(SHELL, SHELL_PATH, SHELL, "ShowOSD",
+                                GLib.Variant("(a{sv})", (params,)), None,
+                                Gio.DBusCallFlags.NO_AUTO_START, 5000, None)
+        except GLib.Error as err:
+            warn("cannot show the brightness OSD: %s" % err.message)
+
+
+# ----------------------------------------------------------------- service
+
+class Service:
+    def __init__(self, step, exclude):
+        self.step = step
+        self.exclude = exclude
+        self.sway = bool(os.environ.get("SWAYSOCK"))
+        self.wm_msg = "swaymsg" if self.sway else "i3-msg"
+        self.arrivals = Arrivals()
+        self.presses = queue.Queue()
+        self.panel = Panel()
+        self.indicator = Indicator(self.sway)
+        self.screens = {}           # by I2C bus
+        self.outputs = None         # the active outputs at the last look
+        self.looked = False
+        self._look_again = threading.Event()
+        if not self.sway:
+            gio()
+
+    def look_again(self):
+        """Look for screens again at the next press."""
+        self._look_again.set()
+
+    def serve(self, presses):
+        """Take the presses regolith-brightness writes into the pipe."""
+        for thread in (self.panel, self.indicator):
+            thread.start()
+        threading.Thread(target=self.take, daemon=True).start()
+        threading.Thread(target=self.dispatch, daemon=True).start()
+        for line in presses:
+            try:
+                parent, pid, command = line.split()
+                self.arrivals.put((int(parent), int(pid)),
+                                  {b"up": 1, b"down": -1}[command])
+            except (ValueError, KeyError):
+                warn("not a press: %r" % line)
+
+    def take(self):
+        """Pass each press on to the panel, the screens and the indicator."""
+        while True:
+            press = Press(self.arrivals.get(), self.step)
+            self.panel.presses.put(press)
+            self.indicator.presses.put(press)
+            self.presses.put(press)
+
+    def dispatch(self):
+        """Hand each press to the screens, looking for them when due."""
+        while True:
+            press = self.presses.get()
+            outputs = self.active_outputs()
+            if not self.looked or self._look_again.is_set() or \
+                    (outputs is not None and outputs != self.outputs):
+                self.look(outputs)
+            screens = sorted(self.screens.values(),
+                             key=lambda screen: screen.number)
+            for screen in screens:
+                screen.press(press)
+            press.report_screens(screens)
+
+    def active_outputs(self):
+        rc, out, _err = run([self.wm_msg, "-t", "get_outputs"], timeout=10)
+        if rc != 0:
+            return None
+        try:
+            return frozenset(output["name"] for output in json.loads(out)
+                             if output.get("active"))
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def look(self, outputs):
+        self._look_again.clear()
+        self.looked = True
+        if outputs is not None:
+            self.outputs = outputs
+        rc, out, err = run(["ddcutil", "detect", "--brief"], timeout=60)
+        if rc != 0:
+            warn("cannot look for external screens: %s"
+                 % (err.strip() or "ddcutil detect failed"))
+            out = ""
+        screens = {}
+        for number, bus, model, serial in parse_detect(out):
+            if model in self.exclude or serial in self.exclude:
+                continue
+            screen = self.screens.pop(bus, None)
+            if screen is None:
+                screen = Screen(self, bus)
+                screen.start()
+            screen.found(number)
+            screens[bus] = screen
+        for screen in self.screens.values():
+            screen.retire()
+        self.screens = screens
+
+    def watch_session(self):
+        """Return once the window manager has gone for good.
+
+        A subscription to its IPC ends when it exits or restarts (i3); after
+        a restart it can be made again.
+        """
+        misses = 0
+        while misses < 30:
+            try:
+                proc = subprocess.Popen(
+                    [self.wm_msg, "-t", "subscribe", "-m", '["shutdown"]'],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, encoding="utf-8",
+                    errors="replace")
+            except OSError as err:
+                warn("cannot watch the window manager: %s" % err)
+                return
+            answered = False
+            for line in proc.stdout:
+                answered = True
+                if re.search(r'"change"\s*:\s*"exit"', line):
+                    proc.kill()
+                    proc.wait()
+                    return
+            proc.wait()
+            misses = 0 if answered else misses + 1
+            time.sleep(1)
+
+
+def service(step, exclude):
+    """Serve the session; return at once if its service runs already."""
+    directory = state_dir()
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    lock = os.open(os.path.join(directory, "lock"),
+                   os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+    path = os.path.join(directory, "presses")
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    os.mkfifo(path, 0o600)
+    # Open for writing as well, so that the pipe stays open between presses.
+    presses = os.fdopen(os.open(path, os.O_RDWR | os.O_CLOEXEC), "rb")
+    brightness = Service(step, exclude)
+    threading.Thread(target=brightness.serve, args=(presses,),
+                     daemon=True).start()
+    brightness.watch_session()
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    return 0
+
+
+# --------------------------------------------------------------- arguments
+
+def parse_step(text):
+    try:
+        step = int(text)
+    except ValueError:
+        step = 0
+    if not 1 <= step <= 100:
+        warn("the step must be a whole percentage from 1 to 100, not %r; "
+             "using %d" % (text, DEFAULT_STEP))
+        return DEFAULT_STEP
+    return step
+
+
+def parse_exclude(text):
+    return tuple(entry.strip() for entry in text.split(",") if entry.strip())
+
+
+USAGE = "usage: regolith-brightnessd [--step PERCENT] [--exclude LIST]\n"
+
+
+def main(argv):
+    args = argv[1:]
+    options = {"--step": str(DEFAULT_STEP), "--exclude": ""}
+    while len(args) >= 2 and args[0] in options:
+        options[args[0]] = args[1]
+        args = args[2:]
+    if args:
+        sys.stderr.write(USAGE)
+        return 2
+    return service(parse_step(options["--step"]),
+                   parse_exclude(options["--exclude"]))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

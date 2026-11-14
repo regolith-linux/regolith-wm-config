@@ -1,0 +1,19 @@
+###############################################################################
+# Brightness Keys
+###############################################################################
+# The brightness keys step the built-in panel and every external screen (over
+# DDC/CI) by wm.media.brightness.step percent and show the new level in GNOME
+# Flashback's OSD, as the sway session does (65_media_keybindings). Screens
+# whose model name or serial number is in wm.media.brightness.ddc.exclude
+# (comma-separated) are left alone. GNOME Flashback doesn't handle these keys.
+#
+# The service started here (regolith-brightnessd) drives the displays; the
+# keys hand it their presses. i3 would end the command at a comma in the
+# opt-out list, so the command is quoted.
+
+set_from_resource $wm.media.brightness.step wm.media.brightness.step 5
+set_from_resource $wm.media.brightness.ddc.exclude wm.media.brightness.ddc.exclude
+exec --no-startup-id "regolith-brightnessd --step $wm.media.brightness.step --exclude '$wm.media.brightness.ddc.exclude'"
+
+bindsym XF86MonBrightnessUp exec --no-startup-id regolith-brightness up
+bindsym XF86MonBrightnessDown exec --no-startup-id regolith-brightness down

@@ -22,4 +22,5 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	bash tests/check-i3-screenshot.sh
 	bash tests/check-sway-gsd-keys.sh
 	bash tests/check-sway-volumectl.sh
+	bash tests/check-brightness.sh
 endif
