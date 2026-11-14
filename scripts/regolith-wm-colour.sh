@@ -4,9 +4,10 @@
 # /usr/lib/regolith.
 
 # to_hex <colour>: print the colour as #rrggbb, or fail. Colours can be
-# anything GNOME accepts: #RGB, #RRGGBB, #RRRGGGBBB, #RRRRGGGGBBBB, rgb(),
-# rgba() or a colour name, looked up in $REGOLITH_RGB_TXT
-# (/usr/share/X11/rgb.txt by default).
+# anything GNOME accepts: #RGB, #RRGGBB, #RRRGGGBBB, #RRRRGGGGBBBB, the same
+# with alpha (#RGBA, #RRGGBBAA, #RRRRGGGGBBBBAAAA), rgb(), rgba() or a colour
+# name, looked up in $REGOLITH_RGB_TXT (/usr/share/X11/rgb.txt by default).
+# Alpha is not drawn: it is dropped.
 to_hex() {
   local c=$1 n r g b
   c=${c#"${c%%[![:space:]]*}"}
@@ -14,6 +15,10 @@ to_hex() {
 
   if [[ $c =~ ^#([[:xdigit:]]+)$ ]]; then
     local hex=${BASH_REMATCH[1],,}
+    # with alpha: 4, 8 or 16 digits, none of them a multiple of 3
+    if (( ${#hex} == 4 || ${#hex} == 8 || ${#hex} == 16 )); then
+      hex=${hex:0:${#hex} / 4 * 3}
+    fi
     n=$(( ${#hex} / 3 ))
     if (( ${#hex} % 3 != 0 || n < 1 || n > 4 )); then
       return 1
