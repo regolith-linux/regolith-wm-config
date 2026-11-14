@@ -1,0 +1,28 @@
+#!/bin/sh
+# The brightness keys of the Regolith sessions:
+#
+#   regolith-brightness up|down     brighten or dim every display
+#
+# Hands the press to the session's brightness service, regolith-brightnessd,
+# through its pipe, with the process IDs that tell the order of the presses.
+# Presses come in bursts and with key repeat, so this does nothing else.
+set -eu
+
+case "${1-}" in
+    up|down) ;;
+    *) echo "usage: regolith-brightness up|down" >&2; exit 2 ;;
+esac
+pipe=${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/regolith-brightness/presses
+# The session starts the service along with the keys
+tries=0
+while [ ! -p "$pipe" ]; do
+    if [ "$tries" -ge 100 ]; then
+        echo "regolith-brightness: the brightness service (regolith-brightnessd) is not running" >&2
+        exit 1
+    fi
+    sleep 0.1
+    tries=$((tries + 1))
+done
+# Opened for reading as well, so the pipe of a service that has gone can't
+# block the key
+printf '%s %s %s\n' "$PPID" "$$" "$1" 1<>"$pipe"
