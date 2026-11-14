@@ -1,0 +1,13 @@
+###############################################################################
+# Workspace Outputs
+###############################################################################
+
+# Keep workspaces on the outputs named by the wm.workspace.NN.output resources
+# (NN from 01 to 19): output names separated by spaces or tabs, the preferred
+# one first. For example, to show workspace 3 on the first of these outputs
+# that is connected, in both the i3 and the sway session:
+#   wm.workspace.03.output: HDMI-1 HDMI-A-1 eDP-1
+# The helper gives the window manager the matching workspace assignments, and
+# moves pinned workspaces as outputs come and go. A "workspace ... output"
+# line of your own for the same workspace takes precedence.
+exec_always --no-startup-id /usr/bin/regolith-workspace-output
