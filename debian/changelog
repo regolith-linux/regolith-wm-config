@@ -1,3 +1,41 @@
+regolith-wm-config (4.13.0) jammy; urgency=medium
+
+  [ Markus Bertheau ]
+  * fix: publish compositor env to gnome-session before READY
+
+  [ rego-port-bot ]
+  * feat(i3): add touchpad swipe gestures like the sway session's
+  * fix(debian): use the distribution's unclutter-xfixes for the i3 session
+  * fix(clamshell): run the lid close action when there is no eDP panel
+  * fix(sway): read the look selector icon from trawl in the sway session
+  * fix(sway): handle the Rewind, Forward, Repeat, Shuffle and Media keys
+  * fix(sway): show the other picture of a wallpaper pair on a style switch
+  * feat(sway): let a look style the gtklock lock screen
+  * fix(sway): handle the Eject, Battery and airplane mode keys
+  * feat: add keys for stay awake, the touchpad and Night Light in both sessions
+  * docs(debian): shorten the regolith-wm-quick-toggles description
+  * feat: add focus-or-launch, pop-out and transparency keys to both sessions
+  * feat: show a folder of pictures as the wallpaper, and play GNOME slideshows in sway
+  * refactor: rename regolith-i3-wallpaper to regolith-i3-wallpaper-folder
+  * feat(i3): move workspaces back to a monitor when it returns
+  * test(i3): add an autopkgtest for regolith-i3-workspace-memory
+  * test(i3): skip workspace-memory where the dummy X driver has no outputs
+  * fix(sway): ask before logout, reboot and power off through the end-session dialog
+  * fix(debian): break regolith-powerd older than 0.9.0 in regolith-sway-session
+  * fix(sway): end the style watcher when sway exits
+  * fix(sway): show the look's lock-screen colours and image placement
+  * fix(sway): name the audio device in the volume OSD, as X11 does
+  * fix(sway): keep the volume keys working with an avizo without volumectl -n
+  * fix(debian): stop building the sway packages for Debian 12
+  * fix(clamshell): compare the display count as a number
+  * fix(sway): accept colours with alpha (#RRGGBBAA) in looks
+  * chore(debian): remove the orphaned regolith-sway-touchpad-guestures files
+
+  [ Carlos Fernandez Sanz ]
+  * Revert "feat: add focus-or-launch, pop-out and transparency keys to both sessions"
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Sat, 14 Nov 2026 08:50:11 -0800
+
 regolith-wm-config (4.12.0) jammy; urgency=medium
 
   [ rego-port-bot ]
