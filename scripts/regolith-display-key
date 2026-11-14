@@ -1,0 +1,1118 @@
+#!/usr/bin/python3
+"""Display keys of the Regolith sessions (66_display_keys).
+
+  regolith-display-key [--persistent true|false] laptop-display
+        switch the laptop's built-in panel off, or back on
+  regolith-display-key [--persistent true|false] scale up|down
+        step the scale of the screen holding the focused workspace
+  regolith-display-key [--persistent true|false] switch
+        move the screens to the next display layout
+
+The keys change the arrangement through the display configuration service
+that Settings uses, org.gnome.Mutter.DisplayConfig on the session bus. GNOME
+Flashback serves it in the X11 session and regolith-displayd in the sway
+session. The keys follow the properties the service reports, not the kind of
+session:
+
+  layout-mode 1 (logical, regolith-displayd): a logical monitor's size is its
+      mode divided by its scale, each side rounded to the nearest whole number
+      with halves rounded up, as Mutter does. When a size changes, the
+      logical monitors at or past its old right or bottom edge move with it.
+  layout-mode 2 (physical, GNOME Flashback): sizes are the modes' own, so a
+      scale change moves nothing.
+  global-scale-required (GNOME Flashback): every logical monitor has the same
+      scale, so a scale step applies to all of them.
+
+The panel is the first screen marked is-builtin. Switching it off removes it
+from the arrangement and closes the gap it leaves (a mirror only loses the
+panel). Each successful switch-off keeps, for that panel (connector, vendor,
+product and serial), the arrangement read just before it and the one it
+applied, in the session's runtime directory; a refused one keeps nothing.
+Switching the panel back on restores the earlier arrangement as long as the
+logical monitors still match what the key applied (in any order, mirrored
+screens in any order). Otherwise the panel is added at the right edge with
+the mode, scale and transform it had; a mode it no longer lists gives way to
+its preferred mode, and a scale that mode does not list to the mode's
+preferred scale (or 1). With a global scale it takes the scale the others
+share. It never comes back while UPower reports the lid closed.
+
+The switcher cycles mirror (one logical monitor holding every screen), join
+(one logical monitor per screen, in a row), external only (the same without
+the panel) and built-in only (the panel alone). The layout in force is read
+from the grouping of the current state alone; a press puts the next layout
+that is possible in place. Mirror needs a size every screen has and a scale
+every chosen mode lists, and is passed over when the service reports
+supports-mirroring false. A service that leaves the property out, as GNOME
+Flashback does, counts as supporting it, as it does for Settings. External
+only and built-in only need a panel.
+Join and external only place each screen's preferred mode at its preferred
+scale left to right, the panel first and primary; with a global scale they
+share the scale mirror would use, and are passed over when there is none.
+Built-in only always uses the panel's own scale. When the service refuses
+mirror for any reason other than a stale serial, the same press moves on to
+the next layout of the cycle that is possible, and mirror stays out for the
+rest of that press. The switcher does nothing while the lid is closed, and
+it leaves the panel key's memory alone.
+
+Changes last until the session ends; with --persistent true, which the partial
+passes from the wm.display.persistent resource, they are kept. When a request
+is refused because the service's state changed in between, the key works the
+press out again from the new state, as a new press would be (service,
+permission, lid, panel, screens and focused output are all read again).
+Retries over a stale serial and the switcher's moves past a refused mirror
+share one limit: three attempts at most. When several reasons stop a press,
+the notification gives the first of: no service or changes not allowed; the lid (switching the
+panel on, and the switcher); no panel, nothing else active, or fewer than two
+screens; the focused output on no active screen.
+
+Every press shows one notification. Its id is kept in the runtime directory
+and passed back as replaces_id, so each press replaces the previous message.
+The notification is sent after the change, and nothing waits for the
+notification server except the next press's own notification, which needs
+the id the server gives this one.
+
+Presses of any of the keys are handled one at a time, in the order the window
+manager started them, each starting from the state the previous one left: a
+press first waits until every earlier press of the session (an earlier
+process start) has sent its notification or exited, then holds a lock in the
+runtime directory from its first GetCurrentState until its notification has
+been sent. The focused output, the lid and the display state are read once
+its turn has come.
+"""
+
+import argparse
+import atexit
+import fcntl
+import json
+import math
+import os
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+PROG = "regolith-display-key"
+
+DISPLAY_CONFIG = "org.gnome.Mutter.DisplayConfig"
+DISPLAY_CONFIG_PATH = "/org/gnome/Mutter/DisplayConfig"
+CURRENT_STATE = "(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})"
+APPLY_CONFIG = "(uua(iiduba(ssa{sv}))a{sv})"
+
+UPOWER = "org.freedesktop.UPower"
+UPOWER_PATH = "/org/freedesktop/UPower"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+
+METHOD_TEMPORARY = 1
+METHOD_PERSISTENT = 2
+LAYOUT_LOGICAL = 1
+ATTEMPTS = 3
+# Scales this close count as the same; requests carry the listed value.
+SCALE_TOLERANCE = 0.0001
+
+IPC_MAGIC = b"i3-ipc"
+IPC_GET_WORKSPACES = 1
+
+DISPLAY_ICON = "video-display-symbolic"
+WARNING_ICON = "dialog-warning-symbolic"
+
+
+def warn(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+
+
+def state_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        base = os.environ.get("XDG_CACHE_HOME") or \
+            os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(base, PROG)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+# A press stuck elsewhere must not block the keys for good.
+TURN_TIMEOUT = 30
+
+
+def is_press(argv):
+    """Whether a command line runs this helper: directly, through its
+    interpreter, or as the "sh -c" the window manager starts it with."""
+    name = PROG.encode()
+    if any(os.path.basename(arg) == name for arg in argv[:3]):
+        return True
+    if len(argv) > 2 and argv[1] == b"-c":
+        words = argv[2].split()
+        return bool(words) and os.path.basename(words[0]) == name
+    return False
+
+
+def press_key(pid):
+    """(start time, pid) if pid is a press of these keys in this session.
+
+    The start time is when the window manager forked the process, so it
+    gives the order in which the key presses arrived even when the later
+    process happens to run first.
+    """
+    proc = "/proc/%d" % pid
+    try:
+        if os.stat(proc).st_uid != os.getuid():
+            return None
+        with open(proc + "/cmdline", "rb") as fh:
+            argv = fh.read().split(b"\0")
+        if not is_press(argv):
+            return None
+        with open(proc + "/environ", "rb") as fh:
+            environ = fh.read().split(b"\0")
+        with open(proc + "/stat", "rb") as fh:
+            stat = fh.read()
+    except OSError:
+        return None
+    prefix = b"XDG_RUNTIME_DIR="
+    runtime = next((item[len(prefix):] for item in environ
+                    if item.startswith(prefix)), None)
+    if runtime != os.environb.get(b"XDG_RUNTIME_DIR"):
+        return None
+    fields = stat[stat.rindex(b")") + 2:].split()
+    if fields[0] in (b"Z", b"X"):  # exited, waiting to be reaped
+        return None
+    return int(fields[19]), pid
+
+
+def parent(pid):
+    """The parent of pid, or 0 when it is gone."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            stat = fh.read()
+        return int(stat[stat.rindex(b")") + 2:].split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def press_of(pid):
+    """The press pid belongs to: the earliest (start time, pid) among pid
+    and its ancestors that run this helper in this session.
+
+    The window manager starts each press as a shell that runs the helper,
+    so a shell and its helper are one press; naming the press after its
+    earliest process keeps a shell whose helper has not started yet and
+    that helper from looking like two presses waiting for each other.
+    """
+    keys = []
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        key = press_key(pid)
+        if key is not None:
+            keys.append(key)
+        pid = parent(pid)
+    return min(keys) if keys else None
+
+
+def turn_marker(press):
+    """The file a press creates once its notification has been sent."""
+    return os.path.join(state_dir(), "turn-done-%d-%d" % press)
+
+
+def wait_for_earlier_presses():
+    """Wait until every press that started before this one has sent its
+    notification or exited."""
+    me = press_of(os.getpid())
+    if me is None:
+        return
+    earlier = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        key = press_key(pid)
+        if key is None:
+            continue
+        press = press_of(pid)
+        if press is not None and press < me:
+            earlier.setdefault(press, []).append(key)
+    deadline = time.monotonic() + TURN_TIMEOUT
+    for press in sorted(earlier):
+        marker = turn_marker(press)
+        for key in earlier[press]:
+            # An earlier press that has sent its notification may still be
+            # waiting for the server's answer; its turn is over all the same.
+            while press_key(key[1]) == key and not os.path.exists(marker):
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return
+                try:
+                    fd = os.pidfd_open(key[1])
+                except (AttributeError, OSError):
+                    time.sleep(min(0.005, left))
+                    continue
+                try:
+                    select.select([fd], [], [], min(left, 0.005))
+                finally:
+                    os.close(fd)
+
+
+TURN = {"fd": None, "marker": None}
+
+
+def take_turn():
+    """Hold the keys' lock until the turn ends (see end_turn)."""
+    fd = os.open(os.path.join(state_dir(), "lock"),
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    signal.alarm(TURN_TIMEOUT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    signal.alarm(0)
+    TURN["fd"] = fd
+
+
+def end_turn():
+    """Let the next press go: its notification has been sent."""
+    if TURN["fd"] is None:
+        return
+    press = press_of(os.getpid())
+    if press is not None:
+        marker = turn_marker(press)
+        try:
+            write_file(marker, "")
+            TURN["marker"] = marker
+        except OSError:
+            pass
+    os.close(TURN["fd"])
+    TURN["fd"] = None
+
+
+@atexit.register
+def _remove_marker():
+    if TURN["marker"]:
+        try:
+            os.unlink(TURN["marker"])
+        except OSError:
+            pass
+
+
+def write_file(path, text):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+# ------------------------------------------------------------------ geometry
+
+def listed(scales, scale):
+    """The value of scales that counts as scale, or None."""
+    for value in scales:
+        if abs(value - scale) <= SCALE_TOLERANCE:
+            return value
+    return None
+
+
+def common_scales(modes):
+    """The scales every mode lists, ascending, as the first mode lists them."""
+    if not modes:
+        return []
+    found = []
+    for value in sorted(modes[0].scales):
+        if listed(found, value) is None and all(
+                listed(mode.scales, value) is not None for mode in modes[1:]):
+            found.append(value)
+    return found
+
+
+def percent(scale):
+    """A scale as a whole-number percentage (1.3333334 is 133%)."""
+    return "%d%%" % math.floor(scale * 100 + 0.5)
+
+
+class Mode:
+    def __init__(self, raw):
+        (self.id, self.width, self.height, self.refresh, self.preferred_scale,
+         self.scales, properties) = raw
+        self.current = bool(properties.get("is-current", False))
+        self.preferred = bool(properties.get("is-preferred", False))
+
+
+class Screen:
+    """A physical monitor, as GetCurrentState lists it."""
+
+    def __init__(self, raw):
+        identity, modes, properties = raw
+        self.identity = tuple(identity)  # connector, vendor, product, serial
+        self.connector = self.identity[0]
+        self.modes = [Mode(mode) for mode in modes]
+        self.builtin = bool(properties.get("is-builtin", False))
+
+    def mode(self, mode_id):
+        return next((mode for mode in self.modes if mode.id == mode_id), None)
+
+    def current_mode(self):
+        return next((mode for mode in self.modes if mode.current), None)
+
+    def default_mode(self):
+        """The first mode marked preferred, or the first mode."""
+        return next((mode for mode in self.modes if mode.preferred),
+                    self.modes[0] if self.modes else None)
+
+
+class LogicalMonitor:
+    """A logical monitor; screens are (connector, mode id) pairs."""
+
+    def __init__(self, x, y, scale, transform, primary, screens):
+        self.x = x
+        self.y = y
+        self.scale = scale
+        self.transform = transform
+        self.primary = primary
+        self.screens = [tuple(screen) for screen in screens]
+
+    def copy(self):
+        return LogicalMonitor(self.x, self.y, self.scale, self.transform,
+                              self.primary, self.screens)
+
+    def holds(self, connector):
+        return any(name == connector for name, _mode in self.screens)
+
+    def request(self):
+        """The logical monitor as ApplyMonitorsConfig takes it."""
+        return (self.x, self.y, self.scale, self.transform, self.primary,
+                [(name, mode, {}) for name, mode in self.screens])
+
+    def to_json(self):
+        return {"x": self.x, "y": self.y, "scale": self.scale,
+                "transform": self.transform, "primary": self.primary,
+                "screens": [list(screen) for screen in self.screens]}
+
+    @classmethod
+    def from_json(cls, data):
+        return cls(int(data["x"]), int(data["y"]), float(data["scale"]),
+                   int(data["transform"]), bool(data["primary"]),
+                   [(str(name), str(mode)) for name, mode in data["screens"]])
+
+
+def same_arrangement(first, second):
+    """Whether two arrangements match: the logical monitors in any order,
+    the screens of a mirror in any order."""
+    def key(item):
+        return (item.x, item.y, item.transform, item.primary,
+                sorted(item.screens))
+
+    if len(first) != len(second):
+        return False
+    pairs = zip(sorted(first, key=key), sorted(second, key=key))
+    return all(key(a) == key(b) and abs(a.scale - b.scale) <= SCALE_TOLERANCE
+               for a, b in pairs)
+
+
+class State:
+    """The reply of GetCurrentState."""
+
+    def __init__(self, reply):
+        self.serial, screens, logical_monitors, properties = reply
+        self.screens = [Screen(screen) for screen in screens]
+        by_identity = {screen.identity: screen for screen in self.screens}
+        self.logical = []
+        for x, y, scale, transform, primary, members, _p in logical_monitors:
+            screens = []
+            for identity in members:
+                # Members are named by identity only: the mode in use is
+                # the one the screen marks is-current.
+                screen = by_identity.get(tuple(identity))
+                mode = screen.current_mode() if screen else None
+                if mode is None:
+                    raise ValueError("the service lists %s in a logical "
+                                     "monitor without a current mode"
+                                     % identity[0])
+                screens.append((screen.connector, mode.id))
+            self.logical.append(
+                LogicalMonitor(x, y, scale, transform, primary, screens))
+        # Without layout-mode, Mutter's interface says logical is assumed.
+        self.layout_mode = properties.get("layout-mode", LAYOUT_LOGICAL)
+        self.global_scale = bool(properties.get("global-scale-required",
+                                                False))
+        # GNOME Flashback leaves supports-mirroring out. Settings counts a
+        # missing property as mirroring supported, and so do the keys; only
+        # an explicit false rules mirror out.
+        self.mirroring = bool(properties.get("supports-mirroring", True))
+
+    def screen(self, connector):
+        return next((screen for screen in self.screens
+                     if screen.connector == connector), None)
+
+    def mode(self, connector, mode_id):
+        return self.screen(connector).mode(mode_id)
+
+    def arrangement(self):
+        return [item.copy() for item in self.logical]
+
+    def size(self, item):
+        """The width and height item covers in the layout."""
+        mode = self.mode(*item.screens[0])
+        if self.layout_mode == LAYOUT_LOGICAL:
+            width = math.floor(mode.width / item.scale + 0.5)
+            height = math.floor(mode.height / item.scale + 0.5)
+        else:
+            width, height = mode.width, mode.height
+        if item.transform % 2:  # 90 and 270 degrees, flipped or not
+            return height, width
+        return width, height
+
+    def set_scale(self, arrangement, targets, scale):
+        for item in targets:
+            old = self.size(item)
+            item.scale = scale
+            if self.layout_mode == LAYOUT_LOGICAL:
+                shift_neighbours(arrangement, item, old, self.size(item))
+        if self.layout_mode == LAYOUT_LOGICAL:
+            normalise(arrangement)
+
+
+def shift_neighbours(arrangement, item, old, new):
+    """Move what sits at or past item's old right or bottom edge with it."""
+    for other in arrangement:
+        if other is item:
+            continue
+        if other.x >= item.x + old[0]:
+            other.x += new[0] - old[0]
+        if other.y >= item.y + old[1]:
+            other.y += new[1] - old[1]
+
+
+def normalise(arrangement):
+    """Shift everything together until the smallest x and y are 0."""
+    if not arrangement:
+        return
+    left = min(item.x for item in arrangement)
+    top = min(item.y for item in arrangement)
+    for item in arrangement:
+        item.x -= left
+        item.y -= top
+
+
+# ------------------------------------------------------------- the decisions
+
+class Notice:
+    def __init__(self, summary, body="", icon=WARNING_ICON):
+        self.summary = summary
+        self.body = body
+        self.icon = icon
+
+
+class Change:
+    """An arrangement to apply, its notice, what to keep once applied, and
+    the switcher layout it puts in place (None for the other keys)."""
+
+    def __init__(self, arrangement, notice, memory=None, layout=None):
+        self.arrangement = arrangement
+        self.notice = notice
+        self.memory = memory
+        self.layout = layout
+
+
+def switch_off(state, panel):
+    holder = next(item for item in state.logical
+                  if item.holds(panel.connector))
+    if all(name == panel.connector
+           for item in state.logical for name, _mode in item.screens):
+        return Notice("Laptop display stays on",
+                      "It is the only active screen, so it cannot be "
+                      "switched off.")
+    arrangement = state.arrangement()
+    item = arrangement[state.logical.index(holder)]
+    panel_mode = next(mode for name, mode in item.screens
+                      if name == panel.connector)
+    if len(item.screens) > 1:
+        # A mirror only loses the panel.
+        item.screens = [screen for screen in item.screens
+                        if screen[0] != panel.connector]
+    else:
+        arrangement.remove(item)
+        shift_neighbours(arrangement, item, state.size(item), (0, 0))
+        normalise(arrangement)
+        if item.primary:
+            first = min(arrangement, key=lambda other: (other.x, other.y))
+            first.primary = True
+    memory = {
+        "panel": list(panel.identity),
+        "mode": panel_mode,
+        "scale": holder.scale,
+        "transform": holder.transform,
+        "before": [it.to_json() for it in state.logical],
+        "applied": [it.to_json() for it in arrangement],
+    }
+    return Change(arrangement, Notice("Laptop display off", icon=DISPLAY_ICON),
+                  memory)
+
+
+def switch_on(state, panel, memory):
+    """memory is what the key kept when it last switched this panel off."""
+    turned_on = Notice("Laptop display on", icon=DISPLAY_ICON)
+    if memory is not None:
+        applied = [LogicalMonitor.from_json(it) for it in memory["applied"]]
+        if same_arrangement(state.logical, applied):
+            before = [LogicalMonitor.from_json(it) for it in memory["before"]]
+            return Change(before, turned_on)
+    # What the last switch-off kept, each value giving way to the rule for
+    # nothing remembered once it has lapsed: first the mode, then the scale.
+    mode = panel.mode(memory["mode"]) if memory is not None else None
+    if mode is None:
+        mode = panel.default_mode()
+        if mode is None:
+            return Notice("Display change refused",
+                          "The laptop display lists no modes.")
+    scale = listed(mode.scales, memory["scale"]) if memory is not None else None
+    if scale is None:
+        scale = own_scale(mode)
+    transform = memory["transform"] if memory is not None else 0
+    arrangement = state.arrangement()
+    if not arrangement:
+        arrangement.append(LogicalMonitor(0, 0, scale, transform, True,
+                                          [(panel.connector, mode.id)]))
+        return Change(arrangement, turned_on)
+    if state.global_scale:
+        scale = arrangement[0].scale
+        if listed(mode.scales, scale) is None:
+            modes = [state.mode(*screen)
+                     for item in arrangement for screen in item.screens]
+            fitting = [value for value in common_scales(modes + [mode])
+                       if value <= scale + SCALE_TOLERANCE]
+            if not fitting:
+                return Notice("Display change refused",
+                              "No scale is supported by the laptop display "
+                              "together with every active screen.")
+            scale = fitting[-1]
+            state.set_scale(arrangement, arrangement, scale)
+    right = max(item.x + state.size(item)[0] for item in arrangement)
+    arrangement.append(LogicalMonitor(right, 0, scale, transform, False,
+                                      [(panel.connector, mode.id)]))
+    return Change(arrangement, turned_on)
+
+
+def laptop_display(state):
+    panel = next((screen for screen in state.screens if screen.builtin), None)
+    active = panel is not None and any(item.holds(panel.connector)
+                                       for item in state.logical)
+    # The lid only matters when the panel would come on; it is reported
+    # before a missing panel.
+    if not active and lid_closed():
+        return Notice("Laptop display stays off", "The lid is closed.")
+    if panel is None:
+        return Notice("No laptop display",
+                      "No screen is marked as built in.")
+    if active:
+        return switch_off(state, panel)
+    return switch_on(state, panel, load_memory(panel))
+
+
+def step_scale(state, up):
+    # Read for every attempt: the focus may have moved since the key went
+    # down, or since a stale attempt.
+    try:
+        connector = focused_output()
+    except (OSError, ValueError, KeyError) as err:
+        warn("cannot find the focused output: %s" % err)
+        return Notice("No display to scale",
+                      "The focused output is not known: %s" % err)
+    holder = next((item for item in state.logical if item.holds(connector)),
+                  None)
+    if holder is None:
+        return Notice("No display to scale",
+                      "The focused output %s is not an active screen."
+                      % connector)
+    targets = state.logical if state.global_scale else [holder]
+    modes = [state.mode(*screen)
+             for item in targets for screen in item.screens]
+    candidates = common_scales(modes)
+    current = holder.scale
+    if up:
+        scale = min((value for value in candidates
+                     if value > current + SCALE_TOLERANCE), default=None)
+    else:
+        scale = max((value for value in candidates
+                     if value < current - SCALE_TOLERANCE), default=None)
+    names = ", ".join(name for item in targets for name, _mode in item.screens)
+    if scale is None:
+        return Notice("Display scale %s" % percent(current),
+                      "%s cannot be scaled any %s." %
+                      (names, "larger" if up else "smaller"), DISPLAY_ICON)
+    arrangement = state.arrangement()
+    index = [state.logical.index(item) for item in targets]
+    state.set_scale(arrangement, [arrangement[i] for i in index], scale)
+    return Change(arrangement, Notice("Display scale %s" % percent(scale),
+                                      names, DISPLAY_ICON))
+
+
+# --------------------------------------------------------- the display switch
+
+MIRROR = "mirror"
+JOIN = "join"
+EXTERNAL_ONLY = "external only"
+BUILTIN_ONLY = "built-in only"
+LAYOUTS = (MIRROR, JOIN, EXTERNAL_ONLY, BUILTIN_ONLY)
+
+
+def own_scale(mode):
+    """The mode's preferred scale when it lists it, otherwise 1."""
+    scale = listed(mode.scales, mode.preferred_scale)
+    return 1.0 if scale is None else scale
+
+
+def shared_scale(modes):
+    """The greatest scale every mode lists that is not above the least
+    preferred scale among them; None when there is none."""
+    ceiling = min(mode.preferred_scale for mode in modes)
+    fitting = [value for value in common_scales(modes)
+               if value <= ceiling + SCALE_TOLERANCE]
+    return fitting[-1] if fitting else None
+
+
+def mirror_size(state):
+    """The biggest size every screen has a mode of (wider wins), or None."""
+    sizes = None
+    for screen in state.screens:
+        own = {(mode.width, mode.height) for mode in screen.modes}
+        sizes = own if sizes is None else sizes & own
+    if not sizes:
+        return None
+    return max(sizes, key=lambda size: (size[0] * size[1], size[0]))
+
+
+def layout_in_force(state, panel):
+    """Which of the four layouts the grouping of the state matches."""
+    everyone = {screen.connector for screen in state.screens}
+    groups = [{name for name, _mode in item.screens} for item in state.logical]
+    active = set().union(*groups) if groups else set()
+    alone = all(len(group) == 1 for group in groups)
+    if any(everyone <= group for group in groups):
+        return MIRROR
+    if alone and active == everyone:
+        return JOIN
+    if panel is not None:
+        if alone and active == everyone - {panel.connector}:
+            return EXTERNAL_ONLY
+        if active == {panel.connector}:
+            return BUILTIN_ONLY
+    return None
+
+
+def row_screens(state, panel, layout):
+    """The screens of a join or external-only row, in order."""
+    others = [screen for screen in state.screens if screen is not panel]
+    if layout == EXTERNAL_ONLY:
+        return others
+    return ([panel] if panel is not None else []) + others
+
+
+def possible_layouts(state, panel):
+    """The layouts this state allows, each with its arrangement."""
+    possible = {}
+    if state.mirroring and mirror_size(state) is not None:
+        arrangement = mirror_arrangement(state)
+        if arrangement is not None:
+            possible[MIRROR] = arrangement
+    for layout in (JOIN, EXTERNAL_ONLY):
+        if layout == EXTERNAL_ONLY and (panel is None
+                                        or len(state.screens) < 2):
+            continue
+        screens = row_screens(state, panel, layout)
+        if screens and all(screen.modes for screen in screens):
+            arrangement = row_arrangement(state, screens, state.global_scale)
+            if arrangement is not None:
+                possible[layout] = arrangement
+    if panel is not None and panel.modes:
+        possible[BUILTIN_ONLY] = row_arrangement(state, [panel], False)
+    return possible
+
+
+def next_layout(current, possible):
+    """The layout after current in the cycle that is possible."""
+    if current is None:
+        return next((layout for layout in LAYOUTS if layout in possible), None)
+    start = LAYOUTS.index(current)
+    for step in range(1, len(LAYOUTS) + 1):
+        layout = LAYOUTS[(start + step) % len(LAYOUTS)]
+        if layout in possible:
+            return layout
+    return None
+
+
+def mirror_arrangement(state):
+    size = mirror_size(state)
+    chosen = []
+    for screen in state.screens:
+        modes = [mode for mode in screen.modes
+                 if (mode.width, mode.height) == size]
+        preferred = [mode for mode in modes if mode.preferred]
+        # max() keeps the first of equal refresh rates.
+        chosen.append(preferred[0] if preferred
+                      else max(modes, key=lambda mode: mode.refresh))
+    scale = shared_scale(chosen)
+    if scale is None:  # no scale every chosen mode lists: no mirror
+        return None
+    return [LogicalMonitor(0, 0, scale, 0, True,
+                           [(screen.connector, mode.id) for screen, mode
+                            in zip(state.screens, chosen)])]
+
+
+def row_arrangement(state, screens, shared):
+    """One logical monitor per screen, left to right at y 0, the first
+    primary, each in its preferred mode. None when they must share a
+    scale and no scale fits."""
+    modes = [screen.default_mode() for screen in screens]
+    if shared:
+        scale = shared_scale(modes)
+        if scale is None:
+            return None
+        scales = [scale] * len(modes)
+    else:
+        scales = [own_scale(mode) for mode in modes]
+    arrangement = []
+    x = 0
+    for index, (screen, mode, scale) in enumerate(zip(screens, modes, scales)):
+        item = LogicalMonitor(x, 0, scale, 0, index == 0,
+                              [(screen.connector, mode.id)])
+        arrangement.append(item)
+        x += state.size(item)[0]
+    return arrangement
+
+
+def unchanged(reason):
+    return Notice("Display layout unchanged", reason)
+
+
+def display_switch(state, refused=None):
+    """The next layout of the cycle. refused maps the layouts the service
+    has already refused during this press to its error message; they are
+    passed over."""
+    refused = refused or {}
+    if lid_closed():
+        return unchanged("The lid is closed.")
+    if len(state.screens) < 2:
+        return unchanged("Fewer than two screens are connected.")
+    panel = next((screen for screen in state.screens if screen.builtin), None)
+    current = layout_in_force(state, panel)
+    possible = possible_layouts(state, panel)
+    for layout in refused:
+        possible.pop(layout, None)
+    layout = next_layout(current, possible)
+    why = "".join("The display configuration service refused %s: %s\n"
+                  % (name, message) for name, message in refused.items())
+    if layout is None:
+        return unchanged(why + "The connected screens offer no other layout."
+                         if why else "The connected screens offer no layout.")
+    if layout == current:
+        return unchanged(why + "No other layout can be used with the "
+                         "connected screens.")
+    return Change(possible[layout],
+                  Notice("Display layout: %s" % layout, why.rstrip("\n"),
+                         DISPLAY_ICON),
+                  layout=layout)
+
+
+# ----------------------------------------------------------------- the buses
+
+# The GI imports take a moment: a press makes them while an earlier press is
+# still running, so it is ready to go as soon as its turn comes.
+def gio():
+    global Gio, GLib
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib  # noqa: F401
+
+
+def call(bus, name, path, iface, method, args=None, reply=None):
+    # D-Bus's default timeout: a busy service still gets its answer through,
+    # and the notification id it returns is what the next press replaces.
+    result = bus.call_sync(name, path, iface, method, args,
+                           GLib.VariantType(reply) if reply else None,
+                           Gio.DBusCallFlags.NONE, -1, None)
+    return result.unpack() if result is not None else ()
+
+
+def error_text(err):
+    """The error's message without the remote error name GDBus puts in front
+    (Gio.DBusError.strip_remote_error cannot change a Python GLib.Error)."""
+    message = err.message or ""
+    if message.startswith("GDBus.Error:"):
+        _name, separator, rest = message.partition(": ")
+        if separator:
+            message = rest
+    return message
+
+
+def current_state(bus):
+    return State(call(bus, DISPLAY_CONFIG, DISPLAY_CONFIG_PATH, DISPLAY_CONFIG,
+                      "GetCurrentState", None, CURRENT_STATE))
+
+
+def apply_allowed(bus):
+    return call(bus, DISPLAY_CONFIG, DISPLAY_CONFIG_PATH, PROPERTIES, "Get",
+                GLib.Variant("(ss)", (DISPLAY_CONFIG,
+                                      "ApplyMonitorsConfigAllowed")),
+                "(v)")[0]
+
+
+def apply(bus, serial, method, arrangement):
+    call(bus, DISPLAY_CONFIG, DISPLAY_CONFIG_PATH, DISPLAY_CONFIG,
+         "ApplyMonitorsConfig",
+         GLib.Variant(APPLY_CONFIG, (serial, method,
+                                     [item.request() for item in arrangement],
+                                     {})))
+
+
+def lid_closed():
+    """UPower's LidIsClosed; without UPower the lid counts as open."""
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        return bool(call(bus, UPOWER, UPOWER_PATH, PROPERTIES, "Get",
+                         GLib.Variant("(ss)", (UPOWER, "LidIsClosed")),
+                         "(v)")[0])
+    except GLib.Error:
+        return False
+
+
+def load_memory(panel):
+    try:
+        with open(os.path.join(state_dir(), "laptop-display.json"),
+                  encoding="utf-8") as fh:
+            memory = json.load(fh)
+        if memory["panel"] != list(panel.identity):
+            return None
+        # Read every field now, so a damaged file counts as no memory.
+        [LogicalMonitor.from_json(it) for it in memory["before"]]
+        [LogicalMonitor.from_json(it) for it in memory["applied"]]
+        memory["mode"] = str(memory["mode"])
+        memory["scale"] = float(memory["scale"])
+        memory["transform"] = int(memory["transform"])
+        return memory
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def save_memory(memory):
+    write_file(os.path.join(state_dir(), "laptop-display.json"),
+               json.dumps(memory) + "\n")
+
+
+def notify(notice):
+    """Show the notice, replacing the previous notification of these keys.
+
+    The next press may start as soon as the message is on its way: the
+    turn ends once it has been sent. The server's answer, the id the next
+    notification replaces, is awaited afterwards under a second lock that
+    the next press only takes when it is about to notify itself.
+    """
+    fd = os.open(os.path.join(state_dir(), "notify-lock"),
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    signal.alarm(TURN_TIMEOUT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    signal.alarm(0)
+    path = os.path.join(state_dir(), "notification")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            replaces = int(fh.read().strip())
+    except (OSError, ValueError):
+        replaces = 0
+    if not 0 < replaces < 2 ** 32:
+        replaces = 0
+    hints = {
+        "transient": GLib.Variant("b", True),
+        "x-canonical-private-synchronous": GLib.Variant("s", PROG),
+        "x-dunst-stack-tag": GLib.Variant("s", PROG),
+    }
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    except GLib.Error as err:
+        warn("cannot show the notification: %s" % error_text(err))
+        end_turn()
+        return
+    loop = GLib.MainLoop()
+
+    def answered(conn, result):
+        try:
+            nid = conn.call_finish(result).unpack()[0]
+            write_file(path, "%d\n" % nid)
+        except GLib.Error as err:
+            warn("cannot show the notification: %s" % error_text(err))
+        loop.quit()
+
+    bus.call("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+             "org.freedesktop.Notifications", "Notify",
+             GLib.Variant("(susssasa{sv}i)",
+                          ("Regolith", replaces, notice.icon, notice.summary,
+                           notice.body, [], hints, -1)),
+             GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, -1, None,
+             answered)
+    try:
+        bus.flush_sync(None)
+    except GLib.Error:
+        pass
+    end_turn()
+    loop.run()
+    os.close(fd)
+
+
+def read_state(bus, state=None):
+    """GetCurrentState (unless state was just read) and
+    ApplyMonitorsConfigAllowed, or the Notice for a missing service or for
+    changes that are not allowed."""
+    try:
+        if state is None:
+            state = current_state(bus)
+        allowed = apply_allowed(bus)
+    except GLib.Error as err:
+        warn(error_text(err))
+        return Notice("Display configuration unavailable",
+                      "The display configuration service is not running.")
+    except ValueError as err:
+        warn(str(err))
+        return Notice("Display change failed", str(err))
+    if not allowed:
+        return Notice("Display changes not allowed",
+                      "The display configuration service does not permit "
+                      "changes at the moment.")
+    return state
+
+
+def run(decide, method):
+    """Work the press out from the current state and apply it. After a
+    refusal over a stale serial the press is worked out again, from the
+    start, on the fresh state. After any other refusal of the switcher's
+    mirror, the press is worked out again on the same state with mirror
+    passed over. Three attempts in all, one notification.
+
+    decide(state, refused) returns a Change or a Notice; refused maps each
+    switcher layout the service refused during this press to its message."""
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    except GLib.Error as err:
+        warn(error_text(err))
+        notify(Notice("Display configuration unavailable",
+                      "The session bus cannot be reached."))
+        return 1
+    state = read_state(bus)
+    refused = {}
+    for attempt in range(1, ATTEMPTS + 1):
+        if isinstance(state, Notice):
+            notify(state)
+            return 1
+        change = decide(state, refused)
+        if isinstance(change, Notice):
+            notify(change)
+            return 0
+        try:
+            apply(bus, state.serial, method, change.arrangement)
+        except GLib.Error as err:
+            message = error_text(err)
+            try:
+                fresh = current_state(bus)
+            except (GLib.Error, ValueError):
+                fresh = state
+            if fresh.serial != state.serial and attempt < ATTEMPTS:
+                # Everything is read again, the permission included.
+                state = read_state(bus, fresh)
+                continue
+            if change.layout == MIRROR and attempt < ATTEMPTS:
+                # Not a stale serial: the service turned mirror down itself
+                # (a missing supports-mirroring only counts as support). The
+                # press moves on to the next layout of the cycle.
+                warn("mirror was refused: %s" % message)
+                refused[MIRROR] = message
+                continue
+            warn("the change was refused: %s" % message)
+            notify(Notice("Display change refused", message))
+            return 1
+        if change.memory is not None:
+            save_memory(change.memory)
+        notify(change.notice)
+        return 0
+    return 1
+
+
+# ------------------------------------------------------- the focused output
+
+def ipc_socket_path():
+    for variable in ("SWAYSOCK", "I3SOCK"):
+        path = os.environ.get(variable)
+        if path:
+            return path
+    for program in ("sway", "i3"):
+        try:
+            result = subprocess.run([program, "--get-socketpath"],
+                                    capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    raise OSError("no i3 or sway IPC socket found")
+
+
+def receive(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise OSError("the IPC connection closed")
+        data += chunk
+    return data
+
+
+def focused_output():
+    """The output holding the focused workspace, as i3 or sway reports it."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
+        sock.connect(ipc_socket_path())
+        sock.sendall(IPC_MAGIC + struct.pack("=II", 0, IPC_GET_WORKSPACES))
+        header = receive(sock, len(IPC_MAGIC) + 8)
+        length, _kind = struct.unpack("=II", header[len(IPC_MAGIC):])
+        workspaces = json.loads(receive(sock, length).decode("utf-8"))
+    for workspace in workspaces:
+        if workspace.get("focused"):
+            return workspace["output"]
+    raise OSError("no workspace has the focus")
+
+
+# ---------------------------------------------------------------- commands
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=PROG, description="Switch the laptop display, step the scale "
+        "of the focused screen and switch the display layout.")
+    parser.add_argument("--persistent", default="false", metavar="true|false",
+                        help="keep the change instead of applying it until "
+                        "the session ends")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("laptop-display",
+                        help="switch the built-in panel off, or back on")
+    scale = commands.add_parser("scale",
+                                help="step the scale of the focused screen")
+    scale.add_argument("direction", choices=("up", "down"))
+    commands.add_parser("switch", help="move the screens to the next "
+                        "display layout")
+    return parser.parse_args(argv)
+
+
+def main(argv):
+    try:
+        args = parse_args(argv[1:])
+    except SystemExit as error:
+        return error.code
+    if args.persistent.strip().lower() == "true":
+        method = METHOD_PERSISTENT
+    else:
+        method = METHOD_TEMPORARY
+    gio()
+    wait_for_earlier_presses()
+    take_turn()
+    if args.command == "laptop-display":
+        return run(lambda state, _refused: laptop_display(state), method)
+    if args.command == "switch":
+        return run(display_switch, method)
+    up = args.direction == "up"
+    return run(lambda state, _refused: step_scale(state, up), method)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
