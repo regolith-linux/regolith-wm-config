@@ -1,0 +1,355 @@
+#!/usr/bin/python3
+"""Hide the mouse pointer in the i3 session, as sway's hide_cursor does.
+
+    regolith-i3-hide-pointer
+
+The pointer is hidden as soon as a key is pressed, and after it has not been
+used for a while. Moving it, pressing a button or turning the wheel shows it
+again and starts the idle delay over. Keys are not pointer activity: they
+neither postpone nor bring forward the idle hiding.
+
+The settings are the Xresources the sway session's 86_unclutter reads:
+
+  wm.hide_cursor.timeout   The idle delay in milliseconds, 5000 when neither
+                           this nor the older misspelling
+                           wm.hide_cursor.timout is set (timeout wins when
+                           both are). An optional sign followed by digits,
+                           blanks around them ignored as trawld does;
+                           0 never hides when idle, 1 to 99 and negative
+                           values mean 100. Anything else turns the idle
+                           hiding off.
+  wm.hide_cursor.show_when_typing
+                           1, yes, on, true, enable, enabled or active (in
+                           any case) hide the pointer on key presses, as
+                           `seat * hide_cursor when-typing enable` does in
+                           sway (blanks around the value are ignored). Any
+                           other value doesn't, an empty one included. The
+                           default is on.
+
+The resources are read when the helper starts. i3 runs it with exec_always,
+so changed resources apply when i3 restarts; only one instance runs per
+display, and a new one takes over from the running one, which exits.
+
+When wm.program.unclutter is set, i3 starts that program instead and this
+helper hides nothing. It also exits at once when neither kind of hiding is
+on.
+
+The key presses and pointer activity are XInput 2 raw events, which the X
+server sends whatever window has the focus and whatever is grabbed; the
+pointer is hidden with XFixes, over the desktop and every window.
+"""
+
+import ctypes
+import os
+import re
+import select
+import sys
+import time
+
+PROG = "regolith-i3-hide-pointer"
+
+DEFAULT_TIMEOUT = 5000
+MIN_TIMEOUT = 100
+ON_VALUES = ("1", "yes", "on", "true", "enable", "enabled", "active")
+INTEGER = re.compile(r"[+-]?[0-9]+")
+# trawld drops the blanks around a value in the sway session, and xrdb does in
+# RESOURCE_MANAGER; ~/.Xresources read without xrdb keeps the trailing ones.
+BLANKS = " \t"
+
+
+def log(message):
+    print(f"{PROG}: {message}", file=sys.stderr, flush=True)
+
+
+def parse_timeout(value):
+    """The idle delay in milliseconds for a resource value; None for no idle
+    hiding (0, or not a number)."""
+    value = value.strip(BLANKS)
+    if not INTEGER.fullmatch(value):
+        return None
+    delay = int(value)
+    if delay == 0:
+        return None
+    return max(delay, MIN_TIMEOUT)
+
+
+def parse_typing(value):
+    value = value.strip(BLANKS)
+    return value.isascii() and value.lower() in ON_VALUES
+
+
+def settings(resources):
+    """-> (idle delay in ms or None, hide on typing) from a lookup function
+    that returns a resource's value, or None when it isn't set."""
+    timeout = resources("wm.hide_cursor.timeout")
+    if timeout is None:
+        timeout = resources("wm.hide_cursor.timout")
+    if timeout is None:
+        timeout = str(DEFAULT_TIMEOUT)
+    typing = resources("wm.hide_cursor.show_when_typing")
+    return parse_timeout(timeout), True if typing is None else parse_typing(typing)
+
+
+# Xlib, XInput 2 and XFixes ----------------------------------------------------
+
+Window = ctypes.c_ulong
+Atom = ctypes.c_ulong
+Time = ctypes.c_ulong
+CurrentTime = 0
+AnyPropertyType = 0
+XA_STRING = 31
+PropModeAppend = 2
+PropertyChangeMask = 1 << 22
+PropertyNotify = 28
+SelectionClear = 29
+GenericEvent = 35
+XIAllMasterDevices = 1
+XI_RawKeyPress, XI_RawButtonPress, XI_RawMotion = 13, 15, 17
+
+
+class XGenericEventCookie(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+                ("extension", ctypes.c_int), ("evtype", ctypes.c_int),
+                ("cookie", ctypes.c_uint), ("data", ctypes.c_void_p)]
+
+
+class XPropertyEvent(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+                ("window", Window), ("atom", Atom), ("time", Time),
+                ("state", ctypes.c_int)]
+
+
+class XEvent(ctypes.Union):
+    _fields_ = [("type", ctypes.c_int), ("xcookie", XGenericEventCookie),
+                ("xproperty", XPropertyEvent), ("pad", ctypes.c_long * 24)]
+
+
+class XIEventMask(ctypes.Structure):
+    _fields_ = [("deviceid", ctypes.c_int), ("mask_len", ctypes.c_int),
+                ("mask", ctypes.POINTER(ctypes.c_ubyte))]
+
+
+class XrmValue(ctypes.Structure):
+    _fields_ = [("size", ctypes.c_uint), ("addr", ctypes.c_char_p)]
+
+
+def load_x():
+    x11 = ctypes.CDLL("libX11.so.6")
+    xi = ctypes.CDLL("libXi.so.6")
+    xfixes = ctypes.CDLL("libXfixes.so.3")
+    ptr, char_p, c_int = ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int
+    int_p, ulong_p = ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_ulong)
+    x11.XOpenDisplay.restype = ptr
+    x11.XOpenDisplay.argtypes = [char_p]
+    x11.XConnectionNumber.argtypes = [ptr]
+    x11.XDefaultRootWindow.restype = Window
+    x11.XDefaultRootWindow.argtypes = [ptr]
+    x11.XDefaultScreen.argtypes = [ptr]
+    x11.XQueryExtension.argtypes = [ptr, char_p, int_p, int_p, int_p]
+    x11.XInternAtom.restype = Atom
+    x11.XInternAtom.argtypes = [ptr, char_p, c_int]
+    x11.XCreateSimpleWindow.restype = Window
+    x11.XCreateSimpleWindow.argtypes = [ptr, Window, c_int, c_int, ctypes.c_uint, ctypes.c_uint,
+                                        ctypes.c_uint, ctypes.c_ulong, ctypes.c_ulong]
+    x11.XSelectInput.argtypes = [ptr, Window, ctypes.c_long]
+    x11.XChangeProperty.argtypes = [ptr, Window, Atom, Atom, c_int, c_int, char_p, c_int]
+    x11.XGetWindowProperty.argtypes = [ptr, Window, Atom, ctypes.c_long, ctypes.c_long, c_int,
+                                       Atom, ctypes.POINTER(Atom), int_p, ulong_p, ulong_p,
+                                       ctypes.POINTER(ptr)]
+    x11.XFree.argtypes = [ptr]
+    x11.XGetSelectionOwner.restype = Window
+    x11.XGetSelectionOwner.argtypes = [ptr, Atom]
+    x11.XSetSelectionOwner.argtypes = [ptr, Atom, Window, Time]
+    x11.XPending.argtypes = [ptr]
+    x11.XNextEvent.argtypes = [ptr, ctypes.POINTER(XEvent)]
+    x11.XSync.argtypes = [ptr, c_int]
+    x11.XFlush.argtypes = [ptr]
+    x11.XrmGetStringDatabase.restype = ptr
+    x11.XrmGetStringDatabase.argtypes = [char_p]
+    x11.XrmGetFileDatabase.restype = ptr
+    x11.XrmGetFileDatabase.argtypes = [char_p]
+    x11.XrmGetResource.argtypes = [ptr, char_p, char_p, ctypes.POINTER(char_p),
+                                   ctypes.POINTER(XrmValue)]
+    xi.XIQueryVersion.argtypes = [ptr, int_p, int_p]
+    xi.XISelectEvents.argtypes = [ptr, Window, ctypes.POINTER(XIEventMask), c_int]
+    xfixes.XFixesQueryExtension.argtypes = [ptr, int_p, int_p]
+    xfixes.XFixesQueryVersion.argtypes = [ptr, int_p, int_p]
+    xfixes.XFixesHideCursor.argtypes = [ptr, Window]
+    xfixes.XFixesShowCursor.argtypes = [ptr, Window]
+    return x11, xi, xfixes
+
+
+def open_display(x11):
+    dpy = x11.XOpenDisplay(None)
+    if not dpy:
+        log("cannot open the X display")
+        sys.exit(1)
+    return dpy
+
+
+def resource_lookup(x11, dpy, root):
+    """A lookup function over the X resource database: the RESOURCE_MANAGER
+    property, read now, or ~/.Xresources or ~/.Xdefaults without it, as i3's
+    set_from_resource does."""
+    x11.XrmInitialize()
+    db = None
+    actual_type, actual_format = Atom(), ctypes.c_int()
+    nitems, after, data = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_void_p()
+    status = x11.XGetWindowProperty(
+        dpy, root, x11.XInternAtom(dpy, b"RESOURCE_MANAGER", False), 0, 0x7fffffff // 4,
+        False, AnyPropertyType, ctypes.byref(actual_type), ctypes.byref(actual_format),
+        ctypes.byref(nitems), ctypes.byref(after), ctypes.byref(data))
+    if status == 0 and data.value:
+        if actual_type.value == XA_STRING and actual_format.value == 8:
+            db = x11.XrmGetStringDatabase(ctypes.string_at(data, nitems.value))
+        x11.XFree(data)
+    if not db:
+        home = os.environ.get("HOME", "")
+        for name in (".Xresources", ".Xdefaults"):
+            db = x11.XrmGetFileDatabase(os.fsencode(os.path.join(home, name)))
+            if db:
+                break
+
+    def lookup(name):
+        if not db:
+            return None
+        kind, value = ctypes.c_char_p(), XrmValue()
+        if not x11.XrmGetResource(db, name.encode(), name.encode(),
+                                  ctypes.byref(kind), ctypes.byref(value)):
+            return None
+        return (value.addr or b"").decode("utf-8", "surrogateescape")
+
+    return lookup
+
+
+def server_time(x11, dpy, window):
+    """The X server's current time, from an empty property change."""
+    x11.XSelectInput(dpy, window, PropertyChangeMask)
+    atom = x11.XInternAtom(dpy, b"_REGOLITH_I3_HIDE_POINTER_TIME", False)
+    x11.XChangeProperty(dpy, window, atom, XA_STRING, 8, PropModeAppend, b"", 0)
+    event = XEvent()
+    while True:
+        x11.XNextEvent(dpy, ctypes.byref(event))
+        if event.type == PropertyNotify and event.xproperty.window == window:
+            x11.XSelectInput(dpy, window, 0)
+            return event.xproperty.time
+
+
+def take_over(x11, dpy, root):
+    """Own this display's manager selection, so that a running instance sees
+    SelectionClear and exits. The selection is taken with the time the
+    resources were read, so with two instances started in quick succession,
+    the one that read them last wins. Returns False if a newer instance
+    already runs."""
+    screen = x11.XDefaultScreen(dpy)
+    selection = x11.XInternAtom(dpy, f"_REGOLITH_I3_HIDE_POINTER_S{screen}".encode(), False)
+    window = x11.XCreateSimpleWindow(dpy, root, -1, -1, 1, 1, 0, 0, 0)
+    when = server_time(x11, dpy, window)
+    resources = resource_lookup(x11, dpy, root)
+    x11.XSetSelectionOwner(dpy, selection, window, when)
+    x11.XSync(dpy, False)
+    if x11.XGetSelectionOwner(dpy, selection) != window:
+        return None
+    return resources
+
+
+def select_raw_events(x11, xi, dpy, root):
+    opcode, first_event, first_error = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+    if not x11.XQueryExtension(dpy, b"XInputExtension", ctypes.byref(opcode),
+                               ctypes.byref(first_event), ctypes.byref(first_error)):
+        return None
+    # 2.1 or later: raw events arrive even while another client holds a grab
+    major, minor = ctypes.c_int(2), ctypes.c_int(2)
+    if xi.XIQueryVersion(dpy, ctypes.byref(major), ctypes.byref(minor)) != 0 \
+            or (major.value, minor.value) < (2, 1):
+        return None
+    bits = (ctypes.c_ubyte * 3)()
+    for ev in (XI_RawKeyPress, XI_RawButtonPress, XI_RawMotion):
+        bits[ev >> 3] |= 1 << (ev & 7)
+    mask = XIEventMask(XIAllMasterDevices, len(bits), bits)
+    xi.XISelectEvents(dpy, root, ctypes.byref(mask), 1)
+    return opcode.value
+
+
+def has_xfixes_4(xfixes, dpy):
+    event_base, error_base = ctypes.c_int(), ctypes.c_int()
+    if not xfixes.XFixesQueryExtension(dpy, ctypes.byref(event_base), ctypes.byref(error_base)):
+        return False
+    major, minor = ctypes.c_int(4), ctypes.c_int(0)
+    return bool(xfixes.XFixesQueryVersion(dpy, ctypes.byref(major), ctypes.byref(minor))) \
+        and major.value >= 4
+
+
+def wait_readable(fd, timeout):
+    if timeout is not None:
+        timeout = min(max(timeout, 0.0), 3600.0)
+    select.select([fd], [], [], timeout)
+
+
+def hide_pointer():
+    x11, xi, xfixes = load_x()
+    dpy = open_display(x11)
+    root = x11.XDefaultRootWindow(dpy)
+    resources = take_over(x11, dpy, root)
+    if resources is None:
+        return 0  # a newer instance runs
+    if resources("wm.program.unclutter") is not None:
+        return 0  # i3 starts the user's own pointer hider instead
+    timeout, typing = settings(resources)
+    if timeout is None and not typing:
+        return 0  # nothing to hide; a later instance takes over as usual
+    if not has_xfixes_4(xfixes, dpy):
+        log("the X server has no XFixes 4.0; the pointer can't be hidden")
+        return 1
+    opcode = select_raw_events(x11, xi, dpy, root)
+    if opcode is None:
+        log("the X server has no XInput 2.1; the pointer can't be hidden")
+        return 1
+    x11.XSync(dpy, False)
+
+    fd = x11.XConnectionNumber(dpy)
+    event = XEvent()
+    hidden = False
+    last_activity = time.monotonic()
+    while True:
+        while x11.XPending(dpy):
+            x11.XNextEvent(dpy, ctypes.byref(event))
+            if event.type == SelectionClear:
+                return 0  # a new instance took over; disconnecting shows the pointer
+            # The event type is in the cookie; the event data isn't needed.
+            if event.type != GenericEvent or event.xcookie.extension != opcode:
+                continue
+            evtype = event.xcookie.evtype
+            if evtype in (XI_RawMotion, XI_RawButtonPress):
+                last_activity = time.monotonic()
+                if hidden:
+                    xfixes.XFixesShowCursor(dpy, root)
+                    hidden = False
+            elif evtype == XI_RawKeyPress and typing and not hidden:
+                xfixes.XFixesHideCursor(dpy, root)
+                hidden = True
+        wait = None
+        if timeout is not None and not hidden:
+            wait = last_activity + timeout / 1000.0 - time.monotonic()
+            if wait <= 0:
+                xfixes.XFixesHideCursor(dpy, root)
+                hidden = True
+                wait = None
+        x11.XFlush(dpy)
+        wait_readable(fd, wait)
+
+
+def main(argv):
+    if argv in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if argv:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return hide_pointer()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
