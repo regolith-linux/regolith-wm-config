@@ -147,6 +147,12 @@ set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 # WM Config Partials
 ###############################################################################
 
+# Key bindings for the keyboard layout in use, which regolith-inputd writes
+# from the bindings below: i3 itself resolves every binding in the first
+# layout only. i3 runs the first binding that matches, so this comes before
+# the partials.
+include $XDG_RUNTIME_DIR/regolith/i3/layout-bindings
+
 # Include common partials
 include /usr/share/regolith/common/config.d/*
 
