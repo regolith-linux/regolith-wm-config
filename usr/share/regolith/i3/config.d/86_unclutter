@@ -1,3 +1,17 @@
-# Hide the mouse pointer if unused for a duration
-set_from_resource $wm.program.unclutter wm.program.unclutter /usr/bin/unclutter -b
+# Hide the mouse pointer while typing and when it is unused for a while, with
+# the same Xresources as the sway session's 86_unclutter:
+#   wm.hide_cursor.timeout is the idle delay in milliseconds (5000 by default,
+#   0 never hides an idle pointer). Earlier releases read the misspelled
+#   wm.hide_cursor.timout, which still works; timeout wins if both are set.
+#   wm.hide_cursor.show_when_typing, enable by default, hides the pointer as
+#   soon as a key is pressed.
+# regolith-i3-hide-pointer reads them when it starts. It is started with
+# exec_always, so changed resources apply when i3 restarts (i3 doesn't run
+# exec_always on reload); a new instance takes over from the running one.
+exec_always --no-startup-id regolith-i3-hide-pointer
+
+# wm.program.unclutter names another pointer hider to start once, when the
+# session starts, such as "/usr/bin/unclutter -b" (unclutter-xfixes); the
+# hiding above is then off. ":" keeps the pointer visible.
+set_from_resource $wm.program.unclutter wm.program.unclutter true
 exec --no-startup-id $wm.program.unclutter

@@ -151,11 +151,18 @@ Description: Integration of compositor into i3
 Package: regolith-i3-unclutter
 Architecture: any
 Depends: ${misc:Depends},
-  regolith-wm-config,
-  unclutter-xfixes (>= 1.5)
+  libx11-6,
+  libxfixes3,
+  libxi6,
+  python3,
+  regolith-wm-config
+Recommends: unclutter-xfixes (>= 1.5)
 Conflicts: unclutter-startup
-Description: Hide the mouse cursor if not used
- Launches unclutter upon start to hide mouse when not in use.
+Description: Hide the mouse cursor while typing or if not used
+ Hides the mouse pointer as soon as a key is pressed and when it is not used
+ for a while, with the same Xresources as regolith-sway-unclutter in the sway
+ session. wm.program.unclutter can name another pointer hider to run instead,
+ such as unclutter from unclutter-xfixes.
 
 Package: regolith-i3-touchpad-gestures
 Architecture: any
