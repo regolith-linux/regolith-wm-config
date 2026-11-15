@@ -1,1 +1,2 @@
 usr/share/regolith/sway/config.d/80_grimshot
+scripts/regolith-frozen-screenshot usr/lib/regolith/sway
