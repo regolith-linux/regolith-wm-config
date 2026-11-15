@@ -1,0 +1,824 @@
+#!/usr/bin/python3
+"""Screenshot selection on a frozen screen, for the screenshot selection key
+of both Regolith sessions (i3: 80_screenshot, sway: 80_grimshot).
+
+  regolith-frozen-screenshot
+
+The key first takes a picture of every monitor and shows it on all of them
+until the choice is made, so a menu, a tooltip, a notification or a video
+frame stays as it was when the key was pressed, and nothing that changes in
+the meantime ends up in the picture.
+
+  Tab, Right, Down        highlight the next window
+  Shift+Tab, Left, Up     highlight the previous window
+  Enter                   keep the highlighted window's drawing area
+  Ctrl+Enter              keep the whole monitor of the highlighted window
+  Escape                  cancel
+  click                   keep the drawing area of the window under the pointer
+  drag                    keep the area from where the button went down to where
+                          it came up
+
+The windows offered are those with a visible drawing area on a workspace that
+is showing (not behind another tab or stacked window, not under a full-screen
+window or completely under floating ones, not in the scratchpad), in reading
+order: by top edge, then left edge, then container number. The highlight
+starts on the focused window, or on the first one. With no window offered,
+Enter and Ctrl+Enter keep the monitor of the focused workspace.
+
+The picture has one pixel per monitor pixel. It is saved as
+"Screenshot from YYYY-MM-DD HH-MM-SS.png" (the time of the key press; -2, -3
+and so on before ".png" when the name is taken) in the Pictures folder:
+XDG_PICTURES_DIR in user-dirs.dirs, or ~/Pictures. It is copied to the
+clipboard as image/png (xclip in X11, wl-copy in Wayland) and a notification
+names the file. When it cannot be saved, it is still copied and a critical
+notification says so and names the folder.
+
+The key does nothing while a choice is open: one instance at a time holds a
+lock in the session's runtime directory. When the screen cannot be captured,
+or (X11) another program keeps the keyboard and pointer for more than three
+seconds, nothing is kept and a critical notification says why.
+
+The frozen pictures come from grim in Wayland, one per monitor at its scale,
+and from the X11 root window through GDK, drawn at scale 1 whatever the
+desktop's HiDPI setting.
+"""
+import ctypes
+import errno
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+# The file is named after the moment of the key press
+PRESSED = time.time()
+
+PROG = "regolith-frozen-screenshot"
+# Pointer movement, in pixels each way, that still counts as a click
+CLICK_SLOP = 3
+# X11: how long to wait for the keyboard and pointer (the key that started
+# the picker holds them until it is released) before giving up
+GRAB_TIMEOUT = 3.0
+HIGHLIGHT = (0x26 / 255, 0x8B / 255, 0xD2 / 255)
+DIM = 0.35
+
+
+def warn(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+
+
+class Rect:
+    """A rectangle in layout coordinates (logical pixels)."""
+
+    def __init__(self, x, y, width, height):
+        self.x, self.y, self.width, self.height = x, y, width, height
+
+    def __repr__(self):
+        return "Rect(%r, %r, %r, %r)" % (self.x, self.y, self.width, self.height)
+
+    @property
+    def right(self):
+        return self.x + self.width
+
+    @property
+    def bottom(self):
+        return self.y + self.height
+
+    def empty(self):
+        return self.width <= 0 or self.height <= 0
+
+    def contains(self, px, py):
+        return self.x <= px < self.right and self.y <= py < self.bottom
+
+    def intersection(self, other):
+        x, y = max(self.x, other.x), max(self.y, other.y)
+        right, bottom = min(self.right, other.right), min(self.bottom, other.bottom)
+        return Rect(x, y, max(0, right - x), max(0, bottom - y))
+
+    def minus(self, other):
+        """The parts of this rectangle outside other (up to four)."""
+        cut = self.intersection(other)
+        if cut.empty():
+            return [self]
+        parts = [Rect(self.x, self.y, self.width, cut.y - self.y),
+                 Rect(self.x, cut.bottom, self.width, self.bottom - cut.bottom),
+                 Rect(self.x, cut.y, cut.x - self.x, cut.height),
+                 Rect(cut.right, cut.y, self.right - cut.right, cut.height)]
+        return [part for part in parts if not part.empty()]
+
+
+def rect_of(data):
+    return Rect(data["x"], data["y"], data["width"], data["height"])
+
+
+class Output(Rect):
+    """A monitor: its place in the layout and its scale."""
+
+    def __init__(self, name, rect, scale=1.0):
+        super().__init__(rect.x, rect.y, rect.width, rect.height)
+        self.name = name
+        self.scale = scale
+        self.surface = None  # the frozen picture, in the monitor's own pixels
+
+
+class Window:
+    def __init__(self, node, covers):
+        outer = rect_of(node["rect"])
+        inner = node.get("window_rect") or {}
+        # window_rect is the drawing area inside rect, borders and title
+        # bar excluded
+        self.id = node["id"]
+        self.focused = bool(node.get("focused"))
+        self.content = Rect(outer.x + inner.get("x", 0), outer.y + inner.get("y", 0),
+                            inner.get("width", 0), inner.get("height", 0))
+        visible = [self.content] if not self.content.empty() else []
+        for cover in covers:
+            visible = [part for piece in visible for part in piece.minus(cover)]
+        self.visible = visible
+
+    def under(self, px, py):
+        return any(part.contains(px, py) for part in self.visible)
+
+
+# -- the window manager ------------------------------------------------------
+
+class Session:
+    """What the picker needs from the window manager and display server."""
+
+    def __init__(self):
+        self.wayland = bool(os.environ.get("WAYLAND_DISPLAY")) and \
+            bool(os.environ.get("SWAYSOCK"))
+        self.msg = "swaymsg" if self.wayland else "i3-msg"
+
+    def query(self, kind):
+        result = subprocess.run([self.msg, "-t", kind], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, check=True, timeout=10)
+        return json.loads(result.stdout.decode("utf-8", "replace"))
+
+    def outputs(self):
+        return [Output(item["name"], rect_of(item["rect"]),
+                       float(item.get("scale") or 1.0))
+                for item in self.query("get_outputs")
+                if item.get("active", True) and item.get("rect", {}).get("width")]
+
+    def start_capture(self, outputs):
+        """Wayland: start taking the frozen pictures, one per monitor at the
+        monitor's own scale, while GTK loads."""
+        if not self.wayland:
+            return []
+        return [(output, subprocess.Popen(
+            ["grim", "-l", "1", "-o", output.name, "-"],
+            stdout=subprocess.PIPE)) for output in outputs]
+
+    def finish_capture(self, started):
+        """Return the sources: outputs carrying their frozen pictures. In
+        X11, one picture of the whole screen, taken now through GDK."""
+        import cairo
+        if not self.wayland:
+            return [capture_x11_screen()]
+        sources = []
+        for output, process in started:
+            data, _ = process.communicate(timeout=30)
+            if process.returncode != 0 or not data:
+                raise RuntimeError("grim could not take a picture of %s" % output.name)
+            output.surface = cairo.ImageSurface.create_from_png(io.BytesIO(data))
+            sources.append(output)
+        return sources
+
+
+def capture_x11_screen():
+    """The X11 root window as shown, windows included, at scale 1."""
+    import cairo
+    from gi.repository import Gdk
+    root = Gdk.get_default_root_window()
+    width, height = root.get_width(), root.get_height()
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+    cr = cairo.Context(surface)
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    Gdk.cairo_set_source_window(cr, root, 0, 0)
+    cr.paint()
+    surface.flush()
+    screen = Output("screen", Rect(0, 0, width, height))
+    screen.surface = surface
+    return screen
+
+
+def window_nodes(node):
+    """The windows shown in a container: only the front one of a tabbed or
+    stacked container."""
+    children = node.get("nodes") or []
+    if not children:
+        is_window = node.get("type") in ("con", "floating_con") and \
+            (node.get("window") or node.get("pid"))
+        if is_window and node.get("visible", True):
+            return [node]
+        return []
+    if node.get("layout") in ("tabbed", "stacked"):
+        focus = node.get("focus") or []
+        front = [child for child in children if focus and child["id"] == focus[0]]
+        children = front or children[:1]
+    return [leaf for child in children for leaf in window_nodes(child)]
+
+
+def fullscreen_node(node, modes):
+    # i3 marks workspaces as full screen on their output too: only windows
+    # and their containers count
+    if node.get("type") in ("con", "floating_con") and \
+            node.get("fullscreen_mode") in modes:
+        return node
+    for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []):
+        found = fullscreen_node(child, modes)
+        if found is not None:
+            return found
+    return None
+
+
+def workspace_nodes(node):
+    if node.get("type") == "workspace":
+        return [node]
+    return [ws for child in node.get("nodes") or [] for ws in workspace_nodes(child)]
+
+
+def focused_node(node):
+    if node.get("focused"):
+        return node
+    for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []):
+        found = focused_node(child)
+        if found is not None:
+            return found
+    return None
+
+
+def offered_windows(tree, workspaces):
+    """Windows with a visible drawing area on the showing workspaces, in
+    reading order."""
+    showing = {item["name"] for item in workspaces if item.get("visible")}
+    spaces = [ws for ws in workspace_nodes(tree)
+              if ws.get("name") in showing and ws.get("name") != "__i3_scratch"]
+    windows = []
+    whole = None
+    for ws in spaces:
+        whole = whole or fullscreen_node(ws, (2,))
+    if whole is not None:
+        # A window full screen over every monitor hides all others
+        windows = [Window(node, []) for node in window_nodes(whole) or [whole]]
+    else:
+        for ws in spaces:
+            covering = fullscreen_node(ws, (1,))
+            if covering is not None:
+                nodes = window_nodes(covering) or [covering]
+                windows.extend(Window(node, []) for node in nodes)
+                continue
+            floating = ws.get("floating_nodes") or []
+            # Floating windows are listed bottom to top; each hides what is
+            # below it, tiled windows included
+            outers = [rect_of(item["rect"]) for item in floating]
+            for node in window_nodes(ws):
+                windows.append(Window(node, outers))
+            for index, item in enumerate(floating):
+                for node in window_nodes(item):
+                    windows.append(Window(node, outers[index + 1:]))
+    windows = [window for window in windows if window.visible]
+    windows.sort(key=lambda w: (w.content.y, w.content.x, w.id))
+    return windows
+
+
+# -- the picture --------------------------------------------------------------
+
+def crop(sources, rect):
+    """The frozen pixels of a layout rectangle, one picture pixel for each
+    monitor pixel."""
+    import cairo
+    touched = [source for source in sources
+               if not source.intersection(rect).empty()]
+    scale = max([source.scale for source in touched] or [1.0])
+    width = max(1, int(round(rect.width * scale)))
+    height = max(1, int(round(rect.height * scale)))
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+    cr = cairo.Context(surface)
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    for source in touched:
+        part = source.intersection(rect)
+        cr.save()
+        cr.rectangle(round((part.x - rect.x) * scale), round((part.y - rect.y) * scale),
+                     round(part.width * scale), round(part.height * scale))
+        cr.clip()
+        cr.translate(round((source.x - rect.x) * scale), round((source.y - rect.y) * scale))
+        cr.scale(scale / source.scale, scale / source.scale)
+        cr.set_source_surface(source.surface, 0, 0)
+        cr.get_source().set_filter(cairo.FILTER_NEAREST)
+        cr.paint()
+        cr.restore()
+    surface.flush()
+    data = io.BytesIO()
+    surface.write_to_png(data)
+    return data.getvalue()
+
+
+def pictures_folder():
+    """XDG_PICTURES_DIR from user-dirs.dirs, or ~/Pictures."""
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    config = os.environ.get("XDG_CONFIG_HOME") or ""
+    if not os.path.isabs(config):
+        config = os.path.join(home, ".config")
+    folder = None
+    try:
+        with open(os.path.join(config, "user-dirs.dirs"), encoding="utf-8",
+                  errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if not sep or name.strip() != "XDG_PICTURES_DIR":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        if value.startswith("$HOME"):
+            value = home + re.sub(r"\\(.)", r"\1", value[len("$HOME"):])
+        elif value.startswith("/"):
+            value = re.sub(r"\\(.)", r"\1", value)
+        else:
+            continue
+        folder = value
+    return folder or os.path.join(home, "Pictures")
+
+
+def rename_noreplace(source, target):
+    """Rename without replacing an existing file (renameat2), so the picture
+    appears whole and an earlier picture is never overwritten."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is not None:
+        at_fdcwd, rename_noreplace_flag = -100, 1
+        if renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target),
+                     rename_noreplace_flag) == 0:
+            return
+        error = ctypes.get_errno()
+        if error not in (errno.ENOSYS, errno.EINVAL):
+            raise OSError(error, os.strerror(error), target)
+    # No renameat2 on this file system: a hard link fails on an existing name
+    os.link(source, target)
+    os.unlink(source)
+
+
+def save(folder, data):
+    """Save the picture in folder under a name that is still free. Return
+    the name."""
+    stem = time.strftime("Screenshot from %Y-%m-%d %H-%M-%S", time.localtime(PRESSED))
+    os.makedirs(folder, exist_ok=True)
+    fd, partial = tempfile.mkstemp(prefix=".%s-" % PROG, suffix=".part", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(partial, 0o666 & ~umask)
+        number = 1
+        while True:
+            name = stem + (".png" if number == 1 else "-%d.png" % number)
+            try:
+                rename_noreplace(partial, os.path.join(folder, name))
+                return name
+            except FileExistsError:
+                number += 1
+    except BaseException:
+        try:
+            os.unlink(partial)
+        except OSError:
+            pass
+        raise
+
+
+def copy(session, data):
+    """Put the picture on the clipboard. xclip and wl-copy stay in the
+    background and serve it until something else is copied."""
+    if session.wayland:
+        argv = ["wl-copy", "--type", "image/png"]
+    else:
+        argv = ["xclip", "-selection", "clipboard", "-t", "image/png", "-i"]
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        process.communicate(data, timeout=10)
+        return process.returncode == 0
+    except (OSError, subprocess.SubprocessError) as error:
+        warn("could not copy the picture: %s" % error)
+        return False
+
+
+def markup(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def notify(summary, body, critical=False, icon=None):
+    argv = ["notify-send", "-a", "Screenshot"]
+    if icon:
+        argv += ["-i", icon]
+    if critical:
+        argv += ["-u", "critical"]
+    argv += ["--", summary, markup(body)]
+    try:
+        subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        warn("could not show a notification: %s" % error)
+
+
+def deliver(session, data):
+    """Save, copy and announce the picture."""
+    folder = pictures_folder()
+    try:
+        name = save(folder, data)
+    except OSError as error:
+        name = None
+        reason = error.strerror or str(error)
+    copied = copy(session, data)
+    if name is not None:
+        path = os.path.join(folder, name)
+        notify("Screenshot saved",
+               "%s in %s%s" % (name, folder,
+                               ", and copied to the clipboard" if copied
+                               else "; it could not be copied to the clipboard"),
+               icon=path)
+    else:
+        notify("Screenshot not saved",
+               "Could not save the screenshot in %s: %s.%s" % (
+                   folder, reason,
+                   " It was copied to the clipboard." if copied
+                   else " It could not be copied to the clipboard either."),
+               critical=True)
+
+
+# -- choosing -------------------------------------------------------------------
+
+class Picker:
+    """Shows the frozen picture on every monitor and lets the user choose."""
+
+    def __init__(self, session, sources, monitors, windows, focus_output):
+        import gi
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("Gtk", "3.0")
+        if session.wayland:
+            gi.require_version("GtkLayerShell", "0.1")
+        from gi.repository import Gdk, Gtk
+        self.Gdk, self.Gtk = Gdk, Gtk
+        self.session = session
+        self.sources = sources
+        self.monitors = monitors
+        self.windows = windows
+        self.focus_output = focus_output
+        self.index = 0
+        for index, window in enumerate(windows):
+            if window.focused:
+                self.index = index
+        self.press = None
+        self.drag = None
+        self.result = None
+        self.overlays = []
+        self.grabbed = False
+
+    # The overlays: one per monitor in Wayland (a layer-shell surface above
+    # everything, full screen windows included), one over the whole screen in
+    # X11 (an override-redirect window that grabs keyboard and pointer).
+
+    def run(self):
+        Gtk = self.Gtk
+        if self.session.wayland:
+            self.make_layer_overlays()
+        else:
+            self.make_x11_overlay()
+        Gtk.main()
+        self.close()
+        return self.result
+
+    def new_overlay(self, area, window_type):
+        Gtk, Gdk = self.Gtk, self.Gdk
+        window = Gtk.Window(type=window_type)
+        window.set_title(PROG)
+        window.set_decorated(False)
+        window.set_app_paintable(True)
+        drawing = Gtk.DrawingArea()
+        drawing.add_events(Gdk.EventMask.BUTTON_PRESS_MASK |
+                           Gdk.EventMask.BUTTON_RELEASE_MASK |
+                           Gdk.EventMask.POINTER_MOTION_MASK |
+                           Gdk.EventMask.KEY_PRESS_MASK)
+        drawing.connect("draw", self.on_draw, area)
+        window.connect("key-press-event", self.on_key)
+        drawing.connect("button-press-event", self.on_button_press, area)
+        drawing.connect("button-release-event", self.on_button_release, area)
+        drawing.connect("motion-notify-event", self.on_motion, area)
+        window.add(drawing)
+        window.connect("realize", self.on_realize)
+        self.overlays.append((window, drawing, area))
+        return window
+
+    def on_realize(self, window):
+        Gdk = self.Gdk
+        try:
+            cursor = Gdk.Cursor.new_from_name(window.get_display(), "crosshair")
+            window.get_window().set_cursor(cursor)
+        except Exception:  # no cursor theme: keep the default pointer
+            pass
+
+    def make_layer_overlays(self):
+        from gi.repository import GtkLayerShell
+        Gtk, Gdk = self.Gtk, self.Gdk
+        display = Gdk.Display.get_default()
+        monitors = [display.get_monitor(i) for i in range(display.get_n_monitors())]
+        for output in self.sources:
+            monitor = None
+            for candidate in monitors:
+                geometry = candidate.get_geometry()
+                if (geometry.x, geometry.y) == (output.x, output.y):
+                    monitor = candidate
+            window = self.new_overlay(output, Gtk.WindowType.TOPLEVEL)
+            GtkLayerShell.init_for_window(window)
+            GtkLayerShell.set_namespace(window, PROG)
+            GtkLayerShell.set_layer(window, GtkLayerShell.Layer.OVERLAY)
+            for edge in (GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT,
+                         GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM):
+                GtkLayerShell.set_anchor(window, edge, True)
+            GtkLayerShell.set_exclusive_zone(window, -1)
+            if monitor is not None:
+                GtkLayerShell.set_monitor(window, monitor)
+            keyboard = output.name == self.focus_output or len(self.sources) == 1
+            if self.focus_output not in [s.name for s in self.sources] and \
+                    output is self.sources[0]:
+                keyboard = True
+            GtkLayerShell.set_keyboard_mode(
+                window, GtkLayerShell.KeyboardMode.EXCLUSIVE if keyboard
+                else GtkLayerShell.KeyboardMode.NONE)
+            window.set_default_size(int(output.width), int(output.height))
+            window.show_all()
+
+    def make_x11_overlay(self):
+        from gi.repository import GLib
+        Gtk = self.Gtk
+        screen = self.sources[0]
+        window = self.new_overlay(screen, Gtk.WindowType.POPUP)
+        window.move(0, 0)
+        window.set_default_size(int(screen.width), int(screen.height))
+        window.resize(int(screen.width), int(screen.height))
+        window.show_all()
+        self.grab_deadline = time.monotonic() + GRAB_TIMEOUT
+        GLib.timeout_add(20, self.grab)
+
+    def grab(self):
+        """Take keyboard and pointer. The window manager may still hold them
+        for the key that started us: try again until it lets go, and give up
+        when another program keeps them, rather than leave the screen frozen
+        with no way to cancel."""
+        Gdk = self.Gdk
+        window = self.overlays[0][0]
+        seat = window.get_display().get_default_seat()
+        status = seat.grab(window.get_window(), Gdk.SeatCapabilities.ALL, True,
+                           None, None, None, None)
+        if status == Gdk.GrabStatus.SUCCESS:
+            self.grabbed = True
+            window.get_window().focus(Gdk.CURRENT_TIME)
+            return False
+        if time.monotonic() < self.grab_deadline:
+            return True
+        if self.result is None:
+            self.result = ("failed", "another program is holding the keyboard or the pointer")
+            self.Gtk.main_quit()
+        return False
+
+    def close(self):
+        Gtk, Gdk = self.Gtk, self.Gdk
+        if self.grabbed:
+            self.overlays[0][0].get_display().get_default_seat().ungrab()
+        for window, _drawing, _area in self.overlays:
+            window.destroy()
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+        display = Gdk.Display.get_default()
+        if display is not None:
+            display.sync()
+
+    # Choosing
+
+    def finish(self, rect):
+        if self.result is None:
+            self.result = ("keep", rect) if rect is not None else ("cancel", None)
+            self.Gtk.main_quit()
+
+    def highlighted(self):
+        if self.drag is not None:
+            return self.drag
+        if self.windows:
+            return self.windows[self.index].content
+        return None
+
+    def monitor_at(self, px, py):
+        for monitor in self.monitors:
+            if monitor.contains(px, py):
+                return monitor
+        return None
+
+    def focused_monitor(self):
+        for monitor in self.monitors:
+            if monitor.name == self.focus_output:
+                return monitor
+        return self.monitors[0] if self.monitors else self.sources[0]
+
+    def on_key(self, _widget, event):
+        Gdk = self.Gdk
+        key = event.keyval
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        forward = (Gdk.KEY_Tab, Gdk.KEY_Right, Gdk.KEY_Down, Gdk.KEY_KP_Right,
+                   Gdk.KEY_KP_Down)
+        backward = (Gdk.KEY_ISO_Left_Tab, Gdk.KEY_Left, Gdk.KEY_Up,
+                    Gdk.KEY_KP_Left, Gdk.KEY_KP_Up)
+        if key == Gdk.KEY_Tab and shift:
+            key = Gdk.KEY_ISO_Left_Tab
+        if key in forward or key in backward:
+            if self.windows and self.drag is None:
+                step = 1 if key in forward else -1
+                self.index = (self.index + step) % len(self.windows)
+                self.redraw()
+        elif key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_ISO_Enter):
+            if self.windows:
+                content = self.windows[self.index].content
+                if ctrl:
+                    centre_x = content.x + content.width / 2
+                    centre_y = content.y + content.height / 2
+                    self.finish(self.monitor_at(centre_x, centre_y) or
+                                self.focused_monitor())
+                else:
+                    self.finish(content)
+            else:
+                self.finish(self.focused_monitor())
+        elif key == Gdk.KEY_Escape:
+            self.finish(None)
+        return True
+
+    @staticmethod
+    def layout_point(area, event):
+        return area.x + event.x, area.y + event.y
+
+    def on_button_press(self, _widget, event, area):
+        if event.button == 1 and event.type == self.Gdk.EventType.BUTTON_PRESS:
+            self.press = self.layout_point(area, event)
+        return True
+
+    def on_motion(self, _widget, event, area):
+        if self.press is None:
+            return True
+        point = self.layout_point(area, event)
+        if self.drag is not None or self.moved(point):
+            self.drag = self.drag_rect(point)
+            self.redraw()
+        return True
+
+    def on_button_release(self, _widget, event, area):
+        if event.button != 1 or self.press is None:
+            return True
+        point = self.layout_point(area, event)
+        if self.drag is None and not self.moved(point):
+            # A click: the window under the pointer, if there is one
+            self.press = None
+            px, py = point
+            for window in reversed(self.windows):
+                if window.under(px, py):
+                    self.finish(window.content)
+                    break
+            return True
+        self.finish(self.drag_rect(point))
+        return True
+
+    def moved(self, point):
+        return abs(point[0] - self.press[0]) > CLICK_SLOP or \
+            abs(point[1] - self.press[1]) > CLICK_SLOP
+
+    def drag_rect(self, point):
+        """The area between press and pointer, both ends included, kept
+        inside the screen."""
+        left = min(m.x for m in self.sources)
+        top = min(m.y for m in self.sources)
+        right = max(m.right for m in self.sources) - 1
+        bottom = max(m.bottom for m in self.sources) - 1
+
+        def clamp(value, low, high):
+            return max(low, min(high, int(round(value))))
+        x1, y1 = clamp(self.press[0], left, right), clamp(self.press[1], top, bottom)
+        x2, y2 = clamp(point[0], left, right), clamp(point[1], top, bottom)
+        return Rect(min(x1, x2), min(y1, y2), abs(x2 - x1) + 1, abs(y2 - y1) + 1)
+
+    def redraw(self):
+        for _window, drawing, _area in self.overlays:
+            drawing.queue_draw()
+
+    def on_draw(self, _widget, cr, area):
+        import cairo
+        cr.save()
+        cr.translate(-area.x, -area.y)
+        for source in self.sources:
+            if source.intersection(area).empty():
+                continue
+            cr.save()
+            cr.rectangle(source.x, source.y, source.width, source.height)
+            cr.clip()
+            cr.translate(source.x, source.y)
+            cr.scale(1 / source.scale, 1 / source.scale)
+            cr.set_source_surface(source.surface, 0, 0)
+            cr.get_source().set_filter(cairo.FILTER_NEAREST)
+            cr.set_operator(cairo.OPERATOR_SOURCE)
+            cr.paint()
+            cr.restore()
+        chosen = self.highlighted()
+        cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        cr.rectangle(area.x, area.y, area.width, area.height)
+        if chosen is not None:
+            cr.rectangle(chosen.x, chosen.y, chosen.width, chosen.height)
+        cr.set_source_rgba(0, 0, 0, DIM)
+        cr.fill()
+        if chosen is not None:
+            cr.set_source_rgb(*HIGHLIGHT)
+            cr.set_line_width(3)
+            cr.rectangle(chosen.x - 1.5, chosen.y - 1.5,
+                         chosen.width + 3, chosen.height + 3)
+            cr.stroke()
+        cr.restore()
+        return True
+
+
+# -- main -------------------------------------------------------------------------
+
+def take_lock():
+    """Hold the one-choice-at-a-time lock, or return None when a choice is
+    already open."""
+    import fcntl
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    path = os.path.join(runtime, "%s-%d.lock" % (PROG, os.getuid()))
+    handle = open(path, "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def pick(session):
+    monitors = session.outputs()
+    started = session.start_capture(monitors)
+    tree = session.query("get_tree")
+    workspaces = session.query("get_workspaces")
+    if not session.wayland:
+        # The overlay is drawn in screen pixels, as i3 lays windows out: a
+        # HiDPI scale from GDK_SCALE or the desktop's window scaling factor
+        # would draw it twice as large and halve the pointer positions
+        os.environ["GDK_SCALE"] = "1"
+    # Load GTK while the pictures are being taken
+    import gi
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk
+    Gdk.set_allowed_backends("wayland" if session.wayland else "x11")
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk
+    if not Gtk.init_check(sys.argv[:1])[0]:
+        raise RuntimeError("could not open the display")
+    sources = session.finish_capture(started)
+    windows = offered_windows(tree, workspaces)
+    focus_output = next((item.get("output") for item in workspaces
+                         if item.get("focused")), None)
+    focused = focused_node(tree)
+    for window in windows:
+        window.focused = focused is not None and window.id == focused["id"]
+    picker = Picker(session, sources, monitors, windows, focus_output)
+    result = picker.run() or ("cancel", None)
+    if result[0] == "keep":
+        deliver(session, crop(sources, result[1]))
+    elif result[0] == "failed":
+        warn(result[1])
+        notify("Screenshot cancelled", result[1][0].upper() + result[1][1:] + ".",
+               critical=True)
+        return 1
+    return 0
+
+
+def main():
+    lock = take_lock()
+    if lock is None:
+        return 0
+    try:
+        return pick(Session())
+    except Exception as error:  # say so instead of failing silently
+        import traceback
+        traceback.print_exc()
+        notify("Screenshot failed", "The screenshot could not be taken: %s." % error,
+               critical=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
