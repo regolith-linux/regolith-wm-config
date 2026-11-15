@@ -55,6 +55,7 @@ Recommends: regolith-i3-compositor,
   regolith-i3-touchpad-gestures,
   regolith-i3-workspace-memory,
   regolith-i3-unclutter
+Suggests: regolith-wm-media-switch
 Description: Regolith i3 root config file
  Basic UI configuration for i3 based on Regolith's default style.
 
@@ -83,6 +84,7 @@ Recommends: regolith-sway-background,
   regolith-sway-session,
   regolith-sway-touchpad-gestures,
   regolith-sway-unclutter
+Suggests: regolith-wm-media-switch
 Description: Regolith sway root config file
  Basic UI configuration for sway based on Regolith's default style.
 
@@ -535,3 +537,17 @@ Breaks: regolith-powerd (<< 0.8.0)
 Description: Quick toggle keys for i3 and sway
  Keybindings that switch stay awake, the touchpad and Night Light, and in
  sway the keyboard backlight.
+
+Package: regolith-wm-media-switch
+Architecture: any
+Depends: ${misc:Depends},
+  gir1.2-glib-2.0,
+  playerctl,
+  pulseaudio-utils (>= 1:16.0),
+  python3,
+  python3-gi,
+  regolith-wm-config
+Description: Sound device and media player keys for i3 and sway
+ Keybindings that switch the sound output, the sound input and the media
+ player the player keys act on, each confirmed with a notification, and the
+ player keys of the i3 session.
