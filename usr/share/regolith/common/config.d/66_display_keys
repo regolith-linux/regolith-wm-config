@@ -1,0 +1,30 @@
+###############################################################################
+# Display keys: the laptop display, the scale of the focused screen and the
+# display layout
+###############################################################################
+# The keys change the arrangement through the display configuration service
+# Settings uses (GNOME Flashback in the X11 session, regolith-displayd in the
+# sway session), so Settings shows what they did. Each key confirms with a
+# notification (regolith-display-key). Changes last until the session ends;
+# set wm.display.persistent to true to keep them.
+set_from_resource $wm.display.persistent wm.display.persistent false
+
+## Modify // Toggle Laptop Display // <><Ctrl> d ##
+set_from_resource $wm.binding.laptop_display wm.binding.laptop_display Ctrl+d
+bindsym $mod+$wm.binding.laptop_display exec --no-startup-id regolith-display-key --persistent=$wm.display.persistent laptop-display
+
+## Modify // Increase Display Scale // <><Ctrl> equal ##
+set_from_resource $wm.binding.display_scale_up wm.binding.display_scale_up Ctrl+equal
+bindsym $mod+$wm.binding.display_scale_up exec --no-startup-id regolith-display-key --persistent=$wm.display.persistent scale up
+
+## Modify // Decrease Display Scale // <><Ctrl> minus ##
+set_from_resource $wm.binding.display_scale_down wm.binding.display_scale_down Ctrl+minus
+bindsym $mod+$wm.binding.display_scale_down exec --no-startup-id regolith-display-key --persistent=$wm.display.persistent scale down
+
+## Modify // Switch Display Layout // <> p ##
+set_from_resource $wm.binding.display_switch wm.binding.display_switch p
+bindsym $mod+$wm.binding.display_switch exec --no-startup-id regolith-display-key --persistent=$wm.display.persistent switch
+
+# The display key many laptops have; the resource above does not move it.
+## Modify // Switch Display Layout // XF86Display ##
+bindsym XF86Display exec --no-startup-id regolith-display-key --persistent=$wm.display.persistent switch
