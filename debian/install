@@ -1,2 +1,3 @@
 scripts/regolith-look-selector /usr/bin
 scripts/regolith-wm-colour.sh usr/lib/regolith
+scripts/regolith-wm-partials /usr/bin
