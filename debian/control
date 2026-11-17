@@ -327,6 +327,7 @@ Package: regolith-wm-networkmanager
 Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config,
+  mate-polkit | polkit-1-auth-agent,
   network-manager-gnome
 Description: nm-applet integration with wm
  Launches nm-applet at wm start.
