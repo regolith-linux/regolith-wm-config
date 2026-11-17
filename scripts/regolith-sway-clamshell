@@ -6,16 +6,24 @@
 #   LID_CLOSE - The script is called when the lid is closed
 #
 # Requirements for using clamshell mode:
-#   - wm.clamshell.enabled is set to true
-#   - An inbuilt display is found
+#   - wm.clamshell.enabled is set to true (the default)
+#   - An inbuilt display is found among the connected outputs
 #   - More than one display is connected
 #
 # Otherwise the lid close action is the one systemd-logind is configured with,
-# as in the X11 session: HandleLidSwitchExternalPower on AC (falling back to
-# HandleLidSwitch, as logind does) and HandleLidSwitch on battery, both
-# "suspend" by default. regolith-powerd keeps logind from acting on the lid
-# itself. The resources wm.lidclose.action.power and wm.lidclose.action.battery,
-# when set, take precedence.
+# as in the X11 session: with more than one display connected (docked),
+# HandleLidSwitchDocked, "ignore" by default; else HandleLidSwitchExternalPower
+# on AC (falling back to HandleLidSwitch, as logind does) and HandleLidSwitch
+# on battery, both "suspend" by default. regolith-powerd keeps logind from
+# acting on the lid itself, so the lid is left alone while another program
+# holds a handle-lid-switch inhibitor, as logind would. The resources
+# wm.lidclose.action.power and wm.lidclose.action.battery, when set, take
+# precedence when not docked; they accept the actions below and logind's
+# names for them.
+#
+# The commands run through /bin/sh -c, as sway's exec runs them. A lid close
+# while another one is still locking the session ahead of a suspend is
+# ignored.
 
 ACTION_TYPE=$1
 
@@ -33,36 +41,65 @@ on_battery() {
   [[ $? -eq 1 ]]
 }
 
+# Print $1 without leading and trailing whitespace.
+trim() {
+  local value=$1
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# Print the lid close action named by $1, or nothing when it names none.
+# Both the action names and systemd-logind's names for them (HandleLidSwitch
+# values) are accepted, regardless of case and surrounding whitespace, with
+# "-" and "_" alike.
+lid_action() {
+  local name
+  name=$( trim "$1" )
+  name=${name,,}
+  name=${name//-/_}
+  case "$name" in
+    "do_nothing" | "ignore")          echo "DO_NOTHING" ;;
+    "lock")                           echo "LOCK" ;;
+    "sleep" | "suspend")              echo "SLEEP" ;;
+    "hibernate")                      echo "HIBERNATE" ;;
+    "hybrid_sleep")                   echo "HYBRID_SLEEP" ;;
+    "suspend_then_hibernate")         echo "SUSPEND_THEN_HIBERNATE" ;;
+    "shutdown" | "poweroff" | "halt") echo "SHUTDOWN" ;;
+    "reboot")                         echo "REBOOT" ;;
+    "kexec")                          echo "KEXEC" ;;
+    "soft_reboot")                    echo "SOFT_REBOOT" ;;
+  esac
+}
+
 # The lock program is wm.program.lock_sway, as for the lock key. When it is
 # unset, the default is regolith-sway-gtklock, from the regolith-sway-gtklock
 # package; set wm.program.lock_sway to use another lock application.
 get_lid_close_cmd() {
   # Actions to take based on the value of wm.lidclose.action
-  local DEFAULT_LOCK="regolith-sway-gtklock"
-  local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK")
-  local SLEEP=$( trawlcat wm.program.sleep "systemctl suspend" )
-  local HIBERNATE=$( trawlcat wm.program.hibernate "systemctl hibernate" )
-  local SHUTDOWN=$( trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt")
-
   case "$1" in
     "DO_NOTHING")
       echo "true"
       ;;
 
     "LOCK")
-      echo "$LOCK"
+      trawlcat wm.program.lock_sway "regolith-sway-gtklock"
       ;;
 
     "SLEEP")
-      echo "$SLEEP"
+      trawlcat wm.program.sleep "systemctl suspend"
       ;;
 
     "HIBERNATE")
-      echo "$HIBERNATE"
+      trawlcat wm.program.hibernate "systemctl hibernate"
       ;;
 
     "SHUTDOWN")
-      echo "$SHUTDOWN"
+      trawlcat wm.program.shutdown "gnome-session-quit --power-off --no-prompt"
+      ;;
+
+    "REBOOT")
+      trawlcat wm.program.reboot "gnome-session-quit --reboot --no-prompt"
       ;;
 
     "HYBRID_SLEEP")
@@ -73,6 +110,14 @@ get_lid_close_cmd() {
       echo "systemctl suspend-then-hibernate"
       ;;
 
+    "KEXEC")
+      echo "systemctl kexec"
+      ;;
+
+    "SOFT_REBOOT")
+      echo "systemctl soft-reboot"
+      ;;
+
     *)
       exit_with_error "Invalid or missing value for resource wm.lidclose.action: $1"
   esac
@@ -81,48 +126,118 @@ get_lid_close_cmd() {
 # Lock the session before suspending, so that a suspend that is delayed or
 # fails never leaves the session unlocked. `gtklock -d` returns once the
 # compositor has confirmed the lock; a locker that does not daemonize keeps
-# running and the bounded wait just times out.
+# running and the bounded wait just times out, leaving it running.
 lock_before_sleep() {
   local DEFAULT_LOCK="regolith-sway-gtklock -d"
-  local LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK" )
-  $LOCK &
+  local LOCK
+  LOCK=$( trawlcat wm.program.lock_sway "$DEFAULT_LOCK" )
+  /bin/sh -c "$LOCK" {LID_CLOSE_LOCK}>&- &
   local LOCK_PID=$!
-  for _ in {1..50}; do
-    kill -0 "$LOCK_PID" 2>/dev/null || return 0
+  # EPOCHREALTIME without its decimal separator counts microseconds
+  local DEADLINE=$(( ${EPOCHREALTIME//[!0-9]/} + 5000000 ))
+  while kill -0 "$LOCK_PID" 2>/dev/null; do
+    if (( ${EPOCHREALTIME//[!0-9]/} >= DEADLINE )); then
+      echo "Locker still running after 5 seconds, continuing"
+      return 0
+    fi
     sleep 0.1
   done
-  echo "Locker still running after 5 seconds, continuing"
+}
+
+# Succeed when a lid close is already in progress for this user. Otherwise
+# take the lid close lock, a lock on the open file LID_CLOSE_LOCK, which goes
+# away when the handler ends or runs the lid close command, however it ends.
+# The programs the handler starts get LID_CLOSE_LOCK closed, so that one left
+# running, such as a locker, does not hold off later lid closes. Without
+# XDG_RUNTIME_DIR, or when the lock file can't be opened there, the lid close
+# goes ahead without it.
+lid_close_in_progress() {
+  local LOCK_FILE="${XDG_RUNTIME_DIR:-}/regolith-sway-clamshell-$UID.lock"
+  if [[ -z ${XDG_RUNTIME_DIR:-} ]] || ! { exec {LID_CLOSE_LOCK}>>"$LOCK_FILE"; } 2>/dev/null; then
+    exec {LID_CLOSE_LOCK}>/dev/null
+    return 1
+  fi
+  flock --nonblock --conflict-exit-code 75 "$LID_CLOSE_LOCK" 2>/dev/null
+  [[ $? -eq 75 ]]
 }
 
 # Print logind's setting for the lid switch property $1 (HandleLidSwitch,
-# HandleLidSwitchExternalPower), or nothing when it is unset or unreadable.
+# HandleLidSwitchExternalPower, HandleLidSwitchDocked), or nothing when it is
+# unset or unreadable.
 logind_lid_setting() {
   busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
     org.freedesktop.login1.Manager "$1" 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p'
 }
 
-# Print the clamshell action for a logind lid switch setting, or $2 for an
-# empty or unknown setting.
+# Print the lid close action for logind's lid switch property $1, or $2 when
+# the setting is empty, unreadable or names no action.
 logind_lid_action() {
-  case "$1" in
-    "ignore")                 echo "DO_NOTHING" ;;
-    "lock")                   echo "LOCK" ;;
-    "suspend" | "sleep")      echo "SLEEP" ;;
-    "hibernate")              echo "HIBERNATE" ;;
-    "hybrid-sleep")           echo "HYBRID_SLEEP" ;;
-    "suspend-then-hibernate") echo "SUSPEND_THEN_HIBERNATE" ;;
-    "poweroff" | "halt")      echo "SHUTDOWN" ;;
-    *)                        echo "$2" ;;
+  local ACTION
+  ACTION=$( lid_action "$( logind_lid_setting "$1" )" )
+  echo "${ACTION:-$2}"
+}
+
+# Print the lid close action set in the resource $1, or $2 (logind's action)
+# when it is unset or empty. A value that names no action is reported and $2
+# is used instead.
+resource_lid_action() {
+  local VALUE ACTION
+  VALUE=$( trawlcat "$1" "$2" )
+  if [[ -z $( trim "$VALUE" ) ]]; then
+    echo "$2"
+    return
+  fi
+  ACTION=$( lid_action "$VALUE" )
+  if [[ -z $ACTION ]]; then
+    echo "Invalid value for resource $1: '$VALUE', using $2 instead" >&2
+    ACTION=$2
+  fi
+  echo "$ACTION"
+}
+
+# Print who holds a handle-lid-switch inhibitor in logind, other than
+# regolith-powerd, which holds one to leave the lid to this script. Fails when
+# there is none or logind can't be asked.
+lid_switch_inhibitor() {
+  busctl --json=short call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager ListInhibitors 2>/dev/null |
+    jq -e -r '[ .data[0][]
+                | select(.[1] != "regolith-powerd")
+                | select(any(.[0] | split(":")[]; . == "handle-lid-switch"))
+                | .[1] ] | .[0]' 2>/dev/null
+}
+
+# Print true or false for wm.clamshell.enabled, regardless of case and
+# surrounding whitespace. Any other value is reported and the default, true,
+# is used.
+clamshell_enabled() {
+  local VALUE ENABLED
+  VALUE=$( trawlcat wm.clamshell.enabled "true" )
+  ENABLED=$( trim "$VALUE" )
+  case "${ENABLED,,}" in
+    "true" | "")
+      echo "true"
+      ;;
+    "false")
+      echo "false"
+      ;;
+    *)
+      echo "Invalid value for resource wm.clamshell.enabled: '$VALUE', using true instead" >&2
+      echo "true"
   esac
 }
 
+# The lid close is in progress until the command starts. Programs holding a
+# delay inhibitor on sleep only let go of it once logind is about to sleep,
+# so waiting for them is left to logind, which does it when the sleep command
+# (systemctl suspend by default) asks it to sleep.
 exec_lid_close_action() {
   case "$1" in
     "SLEEP" | "HIBERNATE" | "HYBRID_SLEEP" | "SUSPEND_THEN_HIBERNATE")
       lock_before_sleep
       ;;
   esac
-  exec $2
+  exec /bin/sh -c "$2" {LID_CLOSE_LOCK}>&-
 }
 
 handle_clamshell() {
@@ -137,32 +252,33 @@ handle_clamshell() {
   fi
 }
 
+if [[ "$ACTION_TYPE" == "LID_CLOSE" ]] && lid_close_in_progress; then
+  echo "A lid close is already in progress, ignoring this one"
+  exit 0
+fi
+
 # The inbuilt display is the first output on a laptop panel connector: eDP,
 # LVDS (older laptops) or DSI (tablets and some small laptops). With none of
 # them, it is empty, not jq's "null", so that the lid close action still runs.
 DEFAULT_INBUILT_DISPLAY=$( swaymsg -t get_outputs --raw | jq -r '[ .[] | select(.name | test("^(eDP|LVDS|DSI)")).name ] | .[0] // empty' )
 INBUILT_DISPLAY=$( trawlcat wm.clamshell.display "$DEFAULT_INBUILT_DISPLAY" )
+# wm.clamshell.display may name an output that is not connected
+INBUILT_DISPLAY_CONNECTED=$( swaymsg -t get_outputs --raw | jq --arg name "$INBUILT_DISPLAY" 'any(.[]; .name == $name)' )
 DISPLAY_COUNT=$( swaymsg -t get_outputs --raw | jq 'length')
-CLAMSHELL_ENABLED=$( trawlcat wm.clamshell.enabled "true" )
-LOGIND_BATTERY_ACTION=$( logind_lid_action "$( logind_lid_setting HandleLidSwitch )" "SLEEP" )
-LOGIND_AC_ACTION=$( logind_lid_action "$( logind_lid_setting HandleLidSwitchExternalPower )" "$LOGIND_BATTERY_ACTION" )
-AC_ACTION=$( trawlcat wm.lidclose.action.power "$LOGIND_AC_ACTION" )
-BATTERY_ACTION=$( trawlcat wm.lidclose.action.battery "$LOGIND_BATTERY_ACTION" )
-AC_ACTION_CMD=$( get_lid_close_cmd "$AC_ACTION" )
-BATTERY_ACTION_CMD=$( get_lid_close_cmd "$BATTERY_ACTION" )
+CLAMSHELL_ENABLED=$( clamshell_enabled )
+DOCKED="false"
 
 
 if [[ $DISPLAY_COUNT -gt 1 ]]; then
-  if [[ -n $INBUILT_DISPLAY && "$CLAMSHELL_ENABLED" == "true" ]]; then
+  if [[ "$INBUILT_DISPLAY_CONNECTED" == "true" && "$CLAMSHELL_ENABLED" == "true" ]]; then
     handle_clamshell
     exit 0
-  elif [[ -n $INBUILT_DISPLAY && "$CLAMSHELL_ENABLED" == "false" ]]; then
+  elif [[ "$INBUILT_DISPLAY_CONNECTED" == "true" ]]; then
     echo "External display connected but clamshell mode is disabled"
-  elif [[ -z $INBUILT_DISPLAY ]]; then
-    echo "Inbuilt display not found."
   else
-    exit_with_error "External display connected but invalid or missing value for resource wm.clamshell.enabled"
+    echo "Inbuilt display not found."
   fi
+  DOCKED="true"
 else
   echo "No external display is connected."
 fi
@@ -176,14 +292,26 @@ if [[ "$ACTION_TYPE" == "LID_OPEN" ]]; then
   echo "Turning on inbuilt display for lid open"
   exec swaymsg output "$INBUILT_DISPLAY" enable
 elif [[ "$ACTION_TYPE" == "LID_CLOSE" ]]; then
+  if INHIBITOR_WHO=$( lid_switch_inhibitor ); then
+    echo "Lid switch inhibited by $INHIBITOR_WHO, ignoring lid close"
+    exit 0
+  fi
+  if [[ "$DOCKED" == "true" ]]; then
+    DOCKED_ACTION=$( logind_lid_action HandleLidSwitchDocked "DO_NOTHING" )
+    echo "Executing lid close action when docked - $DOCKED_ACTION"
+    exec_lid_close_action "$DOCKED_ACTION" "$( get_lid_close_cmd "$DOCKED_ACTION" )"
+  fi
+  LOGIND_BATTERY_ACTION=$( logind_lid_action HandleLidSwitch "SLEEP" )
   if ! on_battery; then
+    LOGIND_AC_ACTION=$( logind_lid_action HandleLidSwitchExternalPower "$LOGIND_BATTERY_ACTION" )
+    AC_ACTION=$( resource_lid_action wm.lidclose.action.power "$LOGIND_AC_ACTION" )
     echo "Executing lid close action on Power - $AC_ACTION"
-    exec_lid_close_action "$AC_ACTION" "$AC_ACTION_CMD"
+    exec_lid_close_action "$AC_ACTION" "$( get_lid_close_cmd "$AC_ACTION" )"
   else
+    BATTERY_ACTION=$( resource_lid_action wm.lidclose.action.battery "$LOGIND_BATTERY_ACTION" )
     echo "Executing lid close action on Battery- $BATTERY_ACTION"
-    exec_lid_close_action "$BATTERY_ACTION" "$BATTERY_ACTION_CMD"
+    exec_lid_close_action "$BATTERY_ACTION" "$( get_lid_close_cmd "$BATTERY_ACTION" )"
   fi
 else
   exit_with_error "Unhandled ACTION_TYPE - $ACTION_TYPE"
 fi
-
