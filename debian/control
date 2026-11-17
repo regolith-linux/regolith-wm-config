@@ -17,9 +17,7 @@ Homepage: https://github.com/regolith-linux/regolith-wm-config
 Package: regolith-wm-config
 Architecture: any
 Depends: ${misc:Depends},
-  i3-wm (>= 4.20) | sway-regolith,
-  xdg-utils,
-  xdotool
+  xdg-utils
 Recommends:
   regolith-wm-base-launchers,
   regolith-wm-ftue,
@@ -40,6 +38,7 @@ Description: Regolith window manager config file
 Package: regolith-i3-root-config
 Architecture: any
 Depends: ${misc:Depends},
+  i3-wm (>= 4.20),
   regolith-wm-config,
   regolith-i3-dbus-activation
 Recommends: regolith-i3-compositor,
@@ -61,6 +60,7 @@ Description: Regolith i3 root config file
 Package: regolith-sway-root-config
 Architecture: any
 Depends: ${misc:Depends},
+  sway-regolith,
   regolith-wm-config,
   regolith-sway-dbus-activation
 Recommends: regolith-sway-background,
@@ -107,7 +107,8 @@ Depends: ${misc:Depends},
   libnotify-bin,
   regolith-wm-config,
   slop,
-  xclip
+  xclip,
+  xdotool
 Description: Regolith Desktop i3 session keybindings
 
 Package: regolith-sway-session

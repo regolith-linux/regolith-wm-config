@@ -1,3 +1,10 @@
+regolith-wm-config (4.13.1) jammy; urgency=medium
+
+  [ Ken Gilmer ]
+  * fix(debian): stop regolith-session-sway from pulling in i3-wm and xdotool
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 16 Nov 2026 16:30:24 -0800
+
 regolith-wm-config (4.13.0) jammy; urgency=medium
 
   [ Markus Bertheau ]
