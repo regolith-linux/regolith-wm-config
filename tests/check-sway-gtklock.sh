@@ -45,16 +45,30 @@ STUB
 # commands are logged.
 cat > "$WORK/bin/swaymsg" <<'STUB'
 #!/bin/sh
+panel='[{"name":"eDP-1"}]'
 if [ "$1" = -t ] && [ "$2" = get_outputs ]; then
-    echo "${STUB_OUTPUTS:-[{\"name\":\"eDP-1\"}]}"
+    echo "${STUB_OUTPUTS:-$panel}"
     exit 0
 fi
 echo "[swaymsg $*]" >> "$STUB_LOG"
 STUB
-printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/busctl"
-printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/on_ac_power"
+# logind's HandleLidSwitchDocked is $STUB_DOCKED and its inhibitors are
+# $STUB_INHIBITORS (ListInhibitors' a(ssssuu), as JSON); nothing else is set
+cat > "$WORK/bin/busctl" <<'STUB'
+#!/bin/sh
+if [ "$1" = get-property ] && [ "$5" = HandleLidSwitchDocked ] && [ -n "${STUB_DOCKED:-}" ]; then
+    echo "s \"$STUB_DOCKED\""
+elif [ "$1" = --json=short ] && [ "$6" = ListInhibitors ]; then
+    echo "{\"type\":\"a(ssssuu)\",\"data\":[[${STUB_INHIBITORS:-}]]}"
+fi
+STUB
+# On AC unless $STUB_BATTERY is set
+# shellcheck disable=SC2016 # expanded by the stand-in, not here
+printf '#!/bin/sh\n[ -z "${STUB_BATTERY:-}" ] || exit 1\n' > "$WORK/bin/on_ac_power"
 # shellcheck disable=SC2016 # expanded by the stand-in, not here
 printf '#!/bin/sh\necho "[systemctl $*]" >> "$STUB_LOG"\n' > "$WORK/bin/systemctl"
+# shellcheck disable=SC2016 # expanded by the stand-in, not here
+printf '#!/bin/sh\necho "[gnome-session-quit $*]" >> "$STUB_LOG"\n' > "$WORK/bin/gnome-session-quit"
 chmod +x "$WORK/bin/"*
 
 # A few lines in the format of /usr/share/X11/rgb.txt
@@ -269,6 +283,56 @@ run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP' \
     'wm.program.lock_sway: swaylock -f' "regolith.lockscreen.wallpaper.file: $SPACE"
 expect 'lid close, SLEEP: wm.program.lock_sway, another locker' swaylock '[-f]' -- '[systemctl suspend]'
 
+# The commands run through sh -c, as sway runs them: quoting and ~ work
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: LOCK' \
+    "wm.program.lock_sway: swaylock -i '$SPACE'"
+expect 'lid close, LOCK: quoted path in wm.program.lock_sway' swaylock '[-i]' "[$SPACE]" --
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP' \
+    'wm.program.lock_sway: swaylock -i ~/lock.png'
+expect 'lid close, SLEEP: path under ~ in wm.program.lock_sway' swaylock '[-i]' "[$WORK/home/lock.png]" -- '[systemctl suspend]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP' \
+    'wm.program.sleep: systemctl suspend && systemctl "hibernate"'
+expect 'lid close, SLEEP: commands chained in wm.program.sleep' '[-d]' -- '[systemctl suspend]' '[systemctl hibernate]'
+
+# logind's spellings of the lid close actions, in any case
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: suspend'
+expect "lid close, logind's suspend: locks and suspends" '[-d]' -- '[systemctl suspend]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: Hybrid-Sleep '
+expect 'lid close, Hybrid-Sleep: locks and hybrid-sleeps' '[-d]' -- '[systemctl hybrid-sleep]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: BOGUS'
+expect 'lid close, unknown action: what logind does' '[-d]' -- '[systemctl suspend]'
+expect_warning 'lid close, unknown action: warning' "wm.lidclose.action.power: 'BOGUS'"
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: reboot'
+expect "lid close, logind's reboot: restarts" '[gnome-session-quit --reboot --no-prompt]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: ignore'
+expect "lid close, logind's ignore: does nothing"
+# On battery, only wm.lidclose.action.battery counts
+run 'STUB_BATTERY=1 regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: BOGUS' \
+    'wm.lidclose.action.battery: lock'
+expect "lid close on battery, logind's lock: locks" --
+run 'STUB_BATTERY=1 regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.battery: Hibernat'
+expect 'lid close on battery, unknown action: what logind does' '[-d]' -- '[systemctl suspend]'
+expect_warning 'lid close on battery, unknown action: warning' "wm.lidclose.action.battery: 'Hibernat'"
+
+# Another program holding logind off the lid holds the lid close off too;
+# regolith-powerd's own inhibitor and sleep inhibitors don't
+LID_HOLD='["sleep:handle-lid-switch","Presentation \"mode\"","Keep the lid closed","block",1000,42]'
+POWERD_HOLD='["handle-power-key:handle-lid-switch","regolith-powerd","","block",1000,7]'
+SLEEP_HOLD='["sleep","NetworkManager","NetworkManager needs to turn off networks","delay",0,9]'
+run "STUB_INHIBITORS='$LID_HOLD,$POWERD_HOLD' regolith-sway-clamshell LID_CLOSE" 'wm.lidclose.action.power: SLEEP'
+expect 'lid switch inhibited: does nothing'
+run "STUB_INHIBITORS='$POWERD_HOLD,$SLEEP_HOLD' regolith-sway-clamshell LID_CLOSE" 'wm.lidclose.action.power: SLEEP'
+expect "regolith-powerd's and a sleep inhibitor: locks and suspends" '[-d]' -- '[systemctl suspend]'
+
+# One lid close at a time: none while another one holds the lid close lock,
+# but a locker left running does not hold off the next one
+LID_LOCK=$XDG_RUNTIME_DIR/regolith-sway-clamshell-$(id -u).lock
+run "flock '$LID_LOCK' regolith-sway-clamshell LID_CLOSE" 'wm.lidclose.action.power: SLEEP'
+expect 'lid close in progress: does nothing'
+run 'regolith-sway-clamshell LID_CLOSE & sleep 1; regolith-sway-clamshell LID_CLOSE; wait' \
+    'wm.lidclose.action.power: LOCK' 'wm.program.lock_sway: swaylock -f; sleep 3'
+expect 'locker still running: the next lid close locks again' swaylock '[-f]' -- swaylock '[-f]' --
+
 # Without regolith-sway-gtklock, another locker set in wm.program.lock_sway
 # still locks, and with none the lid close still suspends
 run "PATH=$WORK/no-gtklock:$WORK/bin:/usr/bin:/bin regolith-sway-clamshell LID_CLOSE" \
@@ -290,17 +354,33 @@ for panel in eDP-1 LVDS-1 DSI-1; do
     run 'regolith-sway-clamshell LID_OPEN'
     expect "clamshell, $panel: panel turned on" "[swaymsg output $panel enable]"
 done
-# Two monitors and no laptop panel: the lid close action runs
+# Two monitors and no laptop panel: docked, logind's HandleLidSwitchDocked
+# decides, "ignore" when unset, whatever wm.lidclose.action.power says
 export STUB_OUTPUTS='[{"name":"Virtual-1"},{"name":"HDMI-A-1"}]'
 run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP'
-expect 'two monitors, no panel, SLEEP: locks and suspends' '[-d]' -- '[systemctl suspend]'
-run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: LOCK'
-expect 'two monitors, no panel, LOCK: locks' --
+expect 'two monitors, no panel, docked action unset: does nothing'
+run 'STUB_DOCKED=lock regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP'
+expect 'two monitors, no panel, docked lock: locks' --
+run 'STUB_DOCKED=suspend regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: LOCK'
+expect 'two monitors, no panel, docked suspend: locks and suspends' '[-d]' -- '[systemctl suspend]'
 run 'regolith-sway-clamshell LID_OPEN'
 expect 'two monitors, no panel: lid open changes nothing'
 # ... unless wm.clamshell.display names the panel
 run 'regolith-sway-clamshell LID_CLOSE' 'wm.lidclose.action.power: SLEEP' 'wm.clamshell.display: Virtual-1'
 expect 'wm.clamshell.display: that output turned off' '[swaymsg output Virtual-1 disable]'
+# ... and only when it is connected
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.clamshell.display: eDP-1'
+expect 'wm.clamshell.display not connected: docked, does nothing'
+# wm.clamshell.enabled in any case; anything else is reported and taken as true
+export STUB_OUTPUTS='[{"name":"eDP-1"},{"name":"HDMI-A-1"}]'
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.clamshell.enabled:  False '
+expect 'wm.clamshell.enabled False: docked, does nothing'
+run 'STUB_DOCKED=lock regolith-sway-clamshell LID_CLOSE' 'wm.clamshell.enabled: false' \
+    'wm.lidclose.action.power: DO_NOTHING'
+expect 'wm.clamshell.enabled false, docked lock: locks' --
+run 'regolith-sway-clamshell LID_CLOSE' 'wm.clamshell.enabled: ture'
+expect 'wm.clamshell.enabled misspelt: panel turned off' '[swaymsg output eDP-1 disable]'
+expect_warning 'wm.clamshell.enabled misspelt: warning' "wm.clamshell.enabled: 'ture'"
 unset STUB_OUTPUTS
 
 exit $status
