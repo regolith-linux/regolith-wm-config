@@ -5,6 +5,7 @@ Maintainer: Ken Gilmer <kgilmer@gmail.com>
 Build-Depends: debhelper (>= 11),
   dbus-daemon <!nocheck>,
   file <!nocheck>,
+  python3-xlib <!nocheck>,
   gir1.2-glib-2.0 <!nocheck>,
   jq <!nocheck>,
   libglib2.0-bin <!nocheck>,
@@ -349,9 +350,16 @@ Description: Configuration for windows and workspaces
 Package: regolith-wm-navigation
 Architecture: any
 Depends: ${misc:Depends},
+  python3,
+  python3-i3ipc,
+  python3-xlib,
   regolith-wm-config
 Description: Configuration for navigation
  Keybindings for workspace navigation.
+ .
+ With the Xresource wm.workspace.wrap set to no, the next and previous
+ workspace keys stop at the first and the last workspace instead of
+ wrapping around.
 
 Package: regolith-sway-dbus-activation
 Architecture: any
