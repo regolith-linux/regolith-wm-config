@@ -4,7 +4,7 @@
 
 ## Launch // Terminal // <> Enter ##
 set_from_resource $wm.binding.terminal wm.binding.terminal Return
-set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/x-terminal-emulator
+set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/xdg-terminal-exec
 bindsym $mod+$wm.binding.terminal exec --no-startup-id systemd-run --user --scope $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
