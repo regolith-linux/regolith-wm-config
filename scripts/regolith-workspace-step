@@ -1,0 +1,370 @@
+#!/usr/bin/python3
+"""Next and previous workspace keys of 30_navigation, in i3 and sway.
+
+    regolith-workspace-step --serve
+
+The eight relative workspace bindings in 30_navigation run
+`nop regolith-workspace-step <direction>`. The window manager does nothing
+for them itself, but it reports every binding it runs to its IPC
+subscribers: one binding event per press, in the order the presses reached
+it. `--serve`, started by 30_navigation with exec_always, subscribes to these
+events and carries out the presses one at a time, in that order, each from
+where the previous one left the focus. So presses that reach the window
+manager back to back (they piled up while the session was busy), the repeats
+of a held key, and next and previous presses mixed together all count once
+each. A process started per press could not promise that: such processes run
+in whatever order the scheduler picks and can act on a workspace list that an
+earlier press is about to change.
+
+Every press reads the resource wm.workspace.wrap, so a changed value applies
+to the next press. sway reads it from trawl (trawlcat); i3 from the X
+resource database on the root window, with the X resource manager's own
+rules, which is what set_from_resource sees. (xrescat is not used: it drops
+double quotes around a value, so `"no"` would stop in i3 but wrap in sway.)
+
+- By default, and for every value other than "no" or "false" (surrounding
+  white space and letter case ignored), the window manager's own
+  `workspace next|prev|next_on_output|prev_on_output` runs, which wraps
+  around at the ends.
+- With "no" or "false" the step stops at the ends. It follows the workspace
+  list the window manager reports, in its order: for next and prev, the
+  numbered workspaces (number 0 or more) by number, workspaces sharing a
+  number in the reported order, then all other workspaces in the reported
+  order; for next_on_output and prev_on_output, the workspaces on the focused
+  workspace's output. Past the last (next) or before the first (prev)
+  workspace nothing is sent to the window manager, so the focus, an empty
+  focused workspace and workspace_auto_back_and_forth are left alone.
+
+One instance serves each window manager; it holds a lock on a file in
+$XDG_RUNTIME_DIR named after the IPC socket. sway runs exec_always again on
+every reload, and the new instance exits at once because the running one
+keeps serving (a reload keeps IPC connections). i3 runs it again after
+`restart`, which ends the running instance's connection: that instance
+exits, and the new one, which waits for the lock, takes over. An instance
+exits when its window manager exits or restarts (shutdown event or end of
+the IPC connection), and an instance still waiting for the lock exits when
+the window manager goes away.
+"""
+
+import fcntl
+import hashlib
+import os
+import re
+import select
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+PROG = "regolith-workspace-step"
+DIRECTIONS = ("next", "prev", "next_on_output", "prev_on_output")
+RESOURCE = "wm.workspace.wrap"
+STOP_VALUES = ("no", "false")
+
+# How long a new instance in i3 waits for the lock before it leaves the
+# window manager to the instance holding it. After an i3 restart the old
+# instance exits as soon as its connection ends, well within this.
+TAKEOVER_TIMEOUT = 5.0
+TAKEOVER_POLL = 0.05
+
+# A resource lookup that takes longer than this counts as unset.
+LOOKUP_TIMEOUT = 2.0
+
+# Single arguments that sway's `workspace` command reads as keywords even when
+# quoted (compared without regard to case), so it cannot switch to a
+# workspace by such a name. sway refuses to create workspaces named after its
+# other keywords (next, prev, current, number, ...).
+SWAY_KEYWORDS = ("output", "gaps", "--no-auto-back-and-forth")
+
+
+def log(message):
+    print(f"{PROG}: {message}", file=sys.stderr, flush=True)
+
+
+# Resource ----------------------------------------------------------------
+
+def wraps(value):
+    """Whether a wm.workspace.wrap value keeps the native, wrapping steps."""
+    return value.strip().lower() not in STOP_VALUES
+
+
+def x_resource(resources):
+    """wm.workspace.wrap in an X resource database string, "" when unset.
+
+    The class is the name as well, as for set_from_resource, so only
+    entries that match the name (possibly through wildcards) count."""
+    from Xlib import rdb
+
+    value = rdb.ResourceDB(string=resources).get(RESOURCE, RESOURCE, None)
+    return "" if value is None else value
+
+
+class Resources:
+    """Reads wm.workspace.wrap from the session's own store."""
+
+    def __init__(self, sway):
+        self.sway = sway
+        self.display = None
+
+    def read(self):
+        """The current wm.workspace.wrap text, "" when unset or unreadable."""
+        try:
+            return self._trawl() if self.sway else self._xrdb()
+        except Exception as err:  # unreadable counts as unset
+            log(f"cannot read {RESOURCE}: {err}")
+            self.close()
+            return ""
+
+    def _trawl(self):
+        return subprocess.run(
+            ["trawlcat", RESOURCE, ""], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            encoding="utf-8", errors="replace", timeout=LOOKUP_TIMEOUT,
+            check=False).stdout
+
+    def _xrdb(self):
+        from Xlib import Xatom, display
+
+        if self.display is None:
+            self.display = display.Display()
+        root = self.display.screen().root
+        prop = root.get_full_property(
+            self.display.get_atom("RESOURCE_MANAGER"), Xatom.STRING)
+        if prop is None:
+            return ""
+        return x_resource(prop.value.decode("utf-8", "replace"))
+
+    def close(self):
+        if self.display is not None:
+            try:
+                self.display.close()
+            except Exception:
+                pass
+            self.display = None
+
+
+# Stepping without wrapping -------------------------------------------------
+
+def _number(workspace):
+    num = workspace.get("num")
+    return num if isinstance(num, int) and not isinstance(num, bool) else -1
+
+
+def visiting_order(workspaces, direction):
+    """(focused workspace, the order the direction walks), from the reported
+    workspace list; (None, []) without a focused workspace."""
+    focused = next((w for w in workspaces if w.get("focused")), None)
+    if focused is None:
+        return None, []
+    if direction.endswith("_on_output"):
+        return focused, [w for w in workspaces
+                         if w.get("output") == focused.get("output")]
+    # sorted() is stable: workspaces sharing a number keep the reported order.
+    numbered = sorted((w for w in workspaces if _number(w) >= 0), key=_number)
+    return focused, numbered + [w for w in workspaces if _number(w) < 0]
+
+
+def stop_target(workspaces, direction):
+    """The workspace a non-wrapping step goes to, None at an end."""
+    focused, order = visiting_order(workspaces, direction)
+    if focused is None:
+        return None
+    index = next(i for i, w in enumerate(order) if w is focused)
+    index += 1 if direction.startswith("next") else -1
+    return order[index] if 0 <= index < len(order) else None
+
+
+def quote_name(name, sway):
+    """A workspace name as one argument for the window manager's parser.
+
+    i3 unescapes \\" and \\\\ inside double quotes. sway keeps every
+    backslash (one before a quote keeps the quote too, and ends nothing),
+    removes the quotes and then replaces $variables: $$ stands for $, and a
+    $ right after a single backslash stays as it is. So for sway, double
+    quotes go between single quotes and everything else between double
+    quotes, in adjacent runs that sway joins into one argument.
+    """
+    if not sway:
+        return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = "".join(
+        "$$" if char == "$" and (i == 0 or name[i - 1] != "\\"
+                                 or (i >= 2 and name[i - 2] == "\\"))
+        else char
+        for i, char in enumerate(name))
+    return "".join("'\"'" if part == '"' else '"' + part + '"'
+                   for part in re.findall(r'(?:[^"\\]|\\.)+|"|\\', escaped))
+
+
+def _focus_inactive_leaf(tree, workspace_id):
+    """The container sway would focus on switching to the workspace: follow
+    each node's focus list from the workspace down. None if the workspace is
+    not in the tree or holds no container."""
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if node.get("id") == workspace_id:
+            break
+        stack += node.get("nodes", []) + node.get("floating_nodes", [])
+    else:
+        return None
+    start = node
+    while node.get("focus"):
+        children = {c.get("id"): c for c in
+                    node.get("nodes", []) + node.get("floating_nodes", [])}
+        child = children.get(node["focus"][0])
+        if child is None:
+            break
+        node = child
+    return None if node is start else node
+
+
+def switch_command(target, sway, get_tree):
+    """The command that focuses the target workspace, None if there is none.
+
+    `workspace --no-auto-back-and-forth <name>` everywhere, except for the
+    names sway's workspace command takes for keywords. There, the same
+    switch is made through what the workspace shows: its output when it is
+    visible, else the container it would focus (a hidden workspace always
+    holds one, since sway drops an empty workspace once it is left)."""
+    if not (sway and target["name"].lower() in SWAY_KEYWORDS):
+        return ("workspace --no-auto-back-and-forth "
+                + quote_name(target["name"], sway))
+    if target.get("visible"):
+        return "focus output " + quote_name(target["output"], sway)
+    leaf = _focus_inactive_leaf(get_tree(), target.get("id"))
+    return None if leaf is None else f"[con_id={leaf['id']}] focus"
+
+
+def stop_command(workspaces, direction, sway, get_tree=dict):
+    """The command for a non-wrapping step, None at an end."""
+    target = stop_target(workspaces, direction)
+    if target is None:
+        return None
+    command = switch_command(target, sway, get_tree)
+    if command is None:
+        log(f"cannot switch to workspace {target['name']!r}")
+    return command
+
+
+# Talking to the window manager --------------------------------------------
+
+def step(conn, direction, sway, resources):
+    """Carry out one press of a relative workspace key."""
+    if wraps(resources.read()):
+        command = "workspace " + direction
+    else:
+        workspaces = [w.ipc_data for w in conn.get_workspaces()]
+        command = stop_command(workspaces, direction, sway,
+                               lambda: conn.get_tree().ipc_data)
+        if command is None:
+            return
+    for reply in conn.command(command):
+        if not reply.success:
+            log(f"{command}: {reply.error}")
+
+
+def binding_direction(command):
+    """The direction of one of our nop bindings, None for any other."""
+    words = (command or "").split()
+    if (len(words) == 3 and words[0].lower() == "nop" and words[1] == PROG
+            and words[2] in DIRECTIONS):
+        return words[2]
+    return None
+
+
+def lock_path(path):
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    key = hashlib.sha1(os.path.realpath(path).encode()).hexdigest()[:16]
+    return os.path.join(runtime, f"{PROG}-{os.getuid()}-{key}.lock")
+
+
+def acquire_lock(path, wait):
+    """Lock this window manager's instance file, waiting up to `wait` seconds
+    for an instance that is going away. None if another instance keeps
+    serving or the window manager is gone."""
+    try:
+        fd = os.open(lock_path(path),
+                     os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+                     0o600)
+    except OSError as err:
+        log(f"cannot open the instance lock: {err}")
+        return None
+    deadline = time.monotonic() + wait
+    probe = None
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except BlockingIOError:
+                pass
+            if time.monotonic() >= deadline:
+                break
+            # Nothing is ever sent on the probe, so it only becomes readable
+            # when the window manager closes it.
+            if probe is None:
+                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                probe.connect(path)
+            if select.select([probe], [], [], TAKEOVER_POLL)[0]:
+                break
+    except OSError as err:
+        log(f"cannot wait for {path}: {err}")
+    finally:
+        if probe is not None:
+            probe.close()
+    os.close(fd)
+    return None
+
+
+def serve():
+    import i3ipc
+
+    # i3ipc looks at I3SOCK before SWAYSOCK. Both window managers set I3SOCK
+    # for what they start, so this is our own window manager even when a
+    # SWAYSOCK was inherited from elsewhere.
+    try:
+        conn = i3ipc.Connection()
+        sway = conn.get_version().ipc_data.get("variant") == "sway"
+    except Exception as err:  # no window manager to serve
+        log(f"cannot connect to the window manager: {err}")
+        return 1
+    # A sway reload keeps the running instance connected, so it keeps
+    # serving; after an i3 restart the running instance is on its way out.
+    if acquire_lock(conn.socket_path, 0 if sway else TAKEOVER_TIMEOUT) is None:
+        return 0
+    resources = Resources(sway)
+
+    def on_binding(_conn, event):
+        direction = binding_direction(event.binding.command)
+        if direction is None:
+            return
+        try:
+            step(conn, direction, sway, resources)
+        except OSError:  # the window manager went away
+            conn.main_quit()
+        except Exception as err:  # keep serving the next press
+            log(f"{direction}: {err}")
+
+    def on_shutdown(_conn, _event):
+        conn.main_quit()
+
+    conn.on(i3ipc.Event.BINDING, on_binding)
+    conn.on(i3ipc.Event.SHUTDOWN, on_shutdown)
+    try:
+        conn.main()  # returns on shutdown or when the connection ends
+    except OSError:  # the connection broke
+        pass
+    resources.close()
+    return 0
+
+
+def main(argv):
+    if argv == ["--serve"]:
+        return serve()
+    print(f"usage: {PROG} --serve", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

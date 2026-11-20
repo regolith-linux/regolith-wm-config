@@ -44,37 +44,48 @@ bindsym $mod+$ws_high_key+$ws7_key workspace number $ws17
 bindsym $mod+$ws_high_key+$ws8_key workspace number $ws18
 bindsym $mod+$ws_high_key+$ws9_key workspace number $ws19
 
+# The next and previous workspace keys below wrap around: next on the last
+# workspace goes to the first one, and previous on the first goes to the
+# last. To make them stop at the first and the last workspace instead, set
+#
+#   wm.workspace.wrap: no
+#
+# ("false" works too). The value is read on every press, so a change applies
+# without a reload. The window manager only reports these bindings (nop);
+# regolith-workspace-step, started at the end of this file, carries out the
+# presses one at a time in the order they arrive.
+
 ## Navigate // Next Workspace // <> Tab ##
 set_from_resource $wm.binding.ws_next wm.binding.ws_next Tab
-bindsym $mod+$wm.binding.ws_next workspace next
+bindsym $mod+$wm.binding.ws_next nop regolith-workspace-step next
 
 ## Navigate // Next Workspace // <><Alt> → ##
 set_from_resource $wm.binding.ws_next2 wm.binding.ws_next2 Right
-bindsym $mod+$alt+$wm.binding.ws_next2 workspace next
+bindsym $mod+$alt+$wm.binding.ws_next2 nop regolith-workspace-step next
 
 ## Navigate // Next Workspace on Output // <><Ctrl> Tab ##
 set_from_resource $wm.binding.ws_next_on_output wm.binding.ws_next_on_output Ctrl+Tab
-bindsym $mod+$wm.binding.ws_next_on_output workspace next_on_output
+bindsym $mod+$wm.binding.ws_next_on_output nop regolith-workspace-step next_on_output
 
 ## Navigate // Next Workspace on Output // <><Ctrl> l ##
 set_from_resource $wm.binding.ws_next_on_output2 wm.binding.ws_next_on_output2 Ctrl+l
-bindsym $mod+$wm.binding.ws_next_on_output2 workspace next_on_output
+bindsym $mod+$wm.binding.ws_next_on_output2 nop regolith-workspace-step next_on_output
 
 ## Navigate // Previous Workspace // <><Shift> Tab ##
 set_from_resource $wm.binding.ws_prev wm.binding.ws_prev Shift+Tab
-bindsym $mod+$wm.binding.ws_prev workspace prev
+bindsym $mod+$wm.binding.ws_prev nop regolith-workspace-step prev
 
 ## Navigate // Previous Workspace // <><Alt> ← ##
 set_from_resource $wm.binding.ws_prev2 wm.binding.ws_prev2 Left
-bindsym $mod+$alt+$wm.binding.ws_prev2 workspace prev
+bindsym $mod+$alt+$wm.binding.ws_prev2 nop regolith-workspace-step prev
 
 ## Navigate // Previous Workspace on Output // <><Ctrl><Shift> Tab ##
 set_from_resource $wm.binding.ws_prev_on_output wm.binding.ws_prev_on_output Ctrl+Shift+Tab
-bindsym $mod+$wm.binding.ws_prev_on_output workspace prev_on_output
+bindsym $mod+$wm.binding.ws_prev_on_output nop regolith-workspace-step prev_on_output
 
 ## Navigate // Previous Workspace on Output // <><Ctrl> h ##
 set_from_resource $wm.binding.ws_prev_on_output2 wm.binding.ws_prev_on_output2 Ctrl+h
-bindsym $mod+$wm.binding.ws_prev_on_output2 workspace prev_on_output
+bindsym $mod+$wm.binding.ws_prev_on_output2 nop regolith-workspace-step prev_on_output
 
 ## Navigate // Workspace Back and Forth // <><Alt> Tab ##
 set_from_resource $wm.binding.ws_back_and_forth wm.binding.ws_back_and_forth Tab
@@ -83,3 +94,8 @@ bindsym $mod+$alt+$wm.binding.ws_back_and_forth workspace back_and_forth
 ## Navigate // Scratchpad // <><Ctrl> a ##
 set_from_resource $wm.binding.scratchpad wm.binding.scratchpad Ctrl+a
 bindsym $mod+$wm.binding.scratchpad scratchpad show
+
+# Carries out the relative workspace keys above. exec_always runs again on a
+# sway reload and after an i3 restart; one instance serves each window manager
+# and it exits with the window manager.
+exec_always --no-startup-id regolith-workspace-step --serve
