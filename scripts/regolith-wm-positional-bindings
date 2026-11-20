@@ -1,0 +1,863 @@
+#!/usr/bin/python3
+"""Config partials of the Regolith i3 and sway sessions, for their include line.
+
+  regolith-wm-positional-bindings i3|sway ROOT-CONFIG PATH...
+
+The root configuration includes its partials through this program:
+
+  include $(/usr/bin/regolith-wm-positional-bindings i3 /etc/regolith/i3/config PATH...)
+
+For each PATH that is a directory, it prints the files in it, in the order
+`include PATH/*` takes them; any other existing PATH is printed as it is. The
+window manager runs it on every start and reload, so a change of the
+resources below takes effect at the next reload. For sway, it also writes the
+printed paths as include lines to
+$XDG_RUNTIME_DIR/regolith-wm-positional-bindings/sway-partials, which the
+sway config includes again for the keybinding viewer.
+
+With the resource wm.keyboard.positional_bindings set to "yes" (read like the
+session's other wm.* resources: from the X resource database for i3, from
+trawld for sway), key bindings stay on the keys they occupy on a US keyboard,
+whatever keyboard layout is active. Each `bindsym` on a character a US
+keyboard types (letters, digits and punctuation, shifted forms included)
+becomes the `bindcode` presses that run it in the same session with a plain
+US layout: for every partial with such bindings, the program writes a copy
+under $XDG_RUNTIME_DIR/regolith-wm-positional-bindings/ and prints the copy instead.
+Includes inside partials are followed and rewritten the same way.
+
+The US presses follow each window manager's own rules for matching a keysym:
+i3 binds the keys whose keysym, at the binding's modifiers or with Shift
+toggled, is the one given; sway compares the key's unshifted keysym with all
+modifiers, and the produced keysym with the modifiers it does not consume,
+and `--to-code` translates through the US keymap. A binding that runs nothing
+on a US keyboard runs nothing. A binding limited to layout groups (Group1 to
+Group4, and i3's Mode_switch, which i3 reads as Group2) keeps that limit on
+its bindcodes, and existing bindcodes only keep their presses from converted
+bindings of the same groups. Keys a US keyboard does not type, keys that are
+the same on every layout (Return, Tab, space, arrows, function keys, XF86
+keys...), mouse bindings and existing bindcodes stay as written. Any other
+value of the resource, or none, includes the partials unchanged.
+"""
+import ctypes
+import hashlib
+import locale
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+RESOURCE = "wm.keyboard.positional_bindings"
+GENERATED = "regolith-wm-positional-bindings"
+
+SHIFT, LOCK, CONTROL = 0x01, 0x02, 0x04
+MOD_MASKS = {"Shift": 0x01, "Lock": 0x02, "Control": 0x04, "Mod1": 0x08,
+             "Mod2": 0x10, "Mod3": 0x20, "Mod4": 0x40, "Mod5": 0x80}
+MOD_NAMES = ["Shift", "Lock", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
+
+# i3's binding grammar (parser-specs/config.spec) matches these literals,
+# ignoring case, before the key.
+I3_MODIFIERS = ["Mod1", "Mod2", "Mod3", "Mod4", "Mod5", "Shift", "Control",
+                "Ctrl", "Mode_switch", "Group1", "Group2", "Group3", "Group4",
+                "$mod"]
+I3_OPTIONS = {"--release", "--border", "--whole-window", "--exclude-titlebar"}
+# sway's modifier names (sway/input/keyboard.c), compared ignoring case.
+SWAY_MODIFIERS = {"shift": 0x01, "lock": 0x02, "control": 0x04, "ctrl": 0x04,
+                  "mod1": 0x08, "alt": 0x08, "mod2": 0x10, "mod3": 0x20,
+                  "mod4": 0x40, "super": 0x40, "mod5": 0x80}
+SWAY_FLAGS = {"--release", "--locked", "--inhibited", "--whole-window",
+              "--border", "--to-code", "--exclude-titlebar", "--no-warn",
+              "--no-repeat"}
+SWAY_MOUSE_FLAGS = {"--whole-window", "--border", "--exclude-titlebar"}
+
+# Keysym classes: sway checks keycode bindings first, then keysyms as the
+# key's first level, then keysyms as produced.
+CODE, RAW, TRANSLATED = 0, 1, 2
+
+
+def log(message):
+    print(f"regolith-wm-positional-bindings: {message}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# The US keyboard, through libxkbcommon.
+# ---------------------------------------------------------------------------
+
+class _RuleNames(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_char_p)
+                for name in ("rules", "model", "layout", "variant", "options")]
+
+
+class USKeyboard:
+    """The plain US keymap that both sessions compile by default."""
+
+    def __init__(self):
+        lib = ctypes.CDLL("libxkbcommon.so.0")
+        vp, u32, sym_p = ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)
+        for name, res, args in (
+                ("xkb_context_new", vp, [ctypes.c_int]),
+                ("xkb_keymap_new_from_names", vp, [vp, ctypes.POINTER(_RuleNames), ctypes.c_int]),
+                ("xkb_keymap_min_keycode", u32, [vp]),
+                ("xkb_keymap_max_keycode", u32, [vp]),
+                ("xkb_keymap_num_levels_for_key", u32, [vp, u32, u32]),
+                ("xkb_keymap_key_get_syms_by_level", ctypes.c_int,
+                 [vp, u32, u32, u32, ctypes.POINTER(sym_p)]),
+                ("xkb_keymap_mod_get_index", u32, [vp, ctypes.c_char_p]),
+                ("xkb_state_new", vp, [vp]),
+                ("xkb_state_update_mask", ctypes.c_int, [vp, u32, u32, u32, u32, u32, u32]),
+                ("xkb_state_key_get_one_sym", u32, [vp, u32]),
+                ("xkb_state_key_get_syms", ctypes.c_int, [vp, u32, ctypes.POINTER(sym_p)]),
+                ("xkb_state_key_get_layout", u32, [vp, u32]),
+                ("xkb_state_key_get_level", u32, [vp, u32, u32]),
+                ("xkb_state_key_get_consumed_mods2", u32, [vp, u32, ctypes.c_int]),
+                ("xkb_keysym_from_name", u32, [ctypes.c_char_p, ctypes.c_int])):
+            function = getattr(lib, name)
+            function.restype = res
+            function.argtypes = args
+        self.lib = lib
+        # No XKB_DEFAULT_* environment: the measure is always plain US.
+        context = lib.xkb_context_new(2)  # XKB_CONTEXT_NO_ENVIRONMENT_NAMES
+        names = _RuleNames(b"evdev", b"pc105", b"us", b"", b"")
+        self.keymap = lib.xkb_keymap_new_from_names(context, ctypes.byref(names), 0)
+        if not context or not self.keymap:
+            raise RuntimeError("cannot compile the US keymap")
+        # Real modifier masks as the keymap numbers them (X core order).
+        self.real = {}
+        for name in MOD_NAMES:
+            index = lib.xkb_keymap_mod_get_index(self.keymap, name.encode())
+            self.real[MOD_MASKS[name]] = (1 << index) if index < 32 else 0
+        self.keycodes = range(lib.xkb_keymap_min_keycode(self.keymap),
+                              lib.xkb_keymap_max_keycode(self.keymap) + 1)
+        self._states = {}
+        self.levels = {}         # keycode -> keysyms of each level of group 1
+        self.on_keys = {}        # keysym -> keycodes with it on any level
+        for code in self.keycodes:
+            levels = []
+            for level in range(lib.xkb_keymap_num_levels_for_key(self.keymap, code, 0)):
+                syms = sym_p()
+                count = lib.xkb_keymap_key_get_syms_by_level(self.keymap, code, 0, level,
+                                                             ctypes.byref(syms))
+                levels.append(syms[0] if count > 0 else 0)
+            self.levels[code] = levels
+            for sym in levels:
+                if sym:
+                    self.on_keys.setdefault(sym, []).append(code)
+        # The characters a US keyboard types: both levels of the keys whose
+        # first level is a printable character other than space.
+        self.characters = set()
+        for code, levels in self.levels.items():
+            if levels and 0x21 <= levels[0] <= 0x7e:
+                self.characters.update(sym for sym in levels[:2] if sym)
+
+    def keysym(self, name, case_insensitive):
+        return self.lib.xkb_keysym_from_name(name.encode(), 1 if case_insensitive else 0)
+
+    def _state(self, mods):
+        state = self._states.get(mods)
+        if state is None:
+            xkb_mods = 0
+            for mask, real in self.real.items():
+                if mods & mask:
+                    xkb_mods |= real
+            state = self.lib.xkb_state_new(self.keymap)
+            self.lib.xkb_state_update_mask(state, xkb_mods, 0, 0, 0, 0, 0)
+            self._states[mods] = state
+        return state
+
+    def one_sym(self, code, mods):
+        return self.lib.xkb_state_key_get_one_sym(self._state(mods), code)
+
+    def syms(self, code, mods):
+        syms = ctypes.POINTER(ctypes.c_uint32)()
+        count = self.lib.xkb_state_key_get_syms(self._state(mods), code, ctypes.byref(syms))
+        return {syms[i] for i in range(count)}
+
+    def level(self, code, mods):
+        state = self._state(mods)
+        layout = self.lib.xkb_state_key_get_layout(state, code)
+        if layout == 0xffffffff:
+            return None
+        return self.lib.xkb_state_key_get_level(state, code, layout)
+
+    def consumed(self, code, mods):
+        xkb = self.lib.xkb_state_key_get_consumed_mods2(self._state(mods), code, 0)
+        return sum(mask for mask, real in self.real.items() if xkb & real)
+
+    # -- the presses each window manager binds on this keymap --------------
+
+    def i3_presses(self, mods, sym):
+        """(keycode, modifiers) i3 grabs for `bindsym mods+sym` (bindings.c)."""
+        presses = []
+        for code in self.on_keys.get(sym, ()):
+            if self.one_sym(code, mods) != sym:
+                level = self.level(code, mods)
+                if level is None or level > 1:
+                    continue
+                if 0xff80 <= self.one_sym(code, mods) <= 0xffbd:  # keypad
+                    continue
+                if self.one_sym(code, mods ^ SHIFT) != sym:
+                    continue
+            presses.append((code, mods, RAW))
+        return presses
+
+    def sway_presses(self, mods, sym, to_code):
+        """(keycode, modifiers, class) on which sway runs `bindsym mods+sym`."""
+        if to_code:
+            codes = [code for code in self.keycodes if self.one_sym(code, 0) == sym]
+            if len(codes) == 1:
+                return [(codes[0], mods, CODE)]
+        presses = []
+        for code in self.on_keys.get(sym, ()):
+            if self.levels[code] and self.levels[code][0] == sym:
+                presses.append((code, mods, RAW))
+            for pressed in (mods, mods | SHIFT):
+                if sym in self.syms(code, pressed) and \
+                        pressed & ~self.consumed(code, pressed) == mods:
+                    presses.append((code, pressed, TRANSLATED))
+        return presses
+
+
+# ---------------------------------------------------------------------------
+# Resources.
+# ---------------------------------------------------------------------------
+
+def read_resources(wm):
+    """The resource database the window manager reads set_from_resource from."""
+    command = ["xrdb", "-query"] if wm == "i3" else ["trawldb", "--query"]
+    if wm == "i3" and not os.environ.get("DISPLAY"):
+        return {}
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    resources = {}
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        name, colon, value = line.partition(":")
+        if colon and name.strip():
+            resources[name.strip()] = value.strip(" \t")
+    return resources
+
+
+def lookup(resources, name):
+    if name in resources:
+        return resources[name]
+    for pattern, value in resources.items():
+        if pattern.startswith("*") and (name == pattern.lstrip("*.")
+                                        or name.endswith("." + pattern.lstrip("*."))):
+            return value
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Configuration text.
+# ---------------------------------------------------------------------------
+
+def logical_lines(text):
+    """(first physical line, last physical line, joined text) per command,
+    joining `\\` continuations as both window managers do (not in comments)."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    result = []
+    index = 0
+    while index < len(lines):
+        start = index
+        joined = lines[index]
+        while joined.endswith("\\") and not joined.lstrip().startswith("#") \
+                and index + 1 < len(lines):
+            index += 1
+            joined = joined[:-1] + lines[index]
+        result.append((start, index, joined))
+        index += 1
+    return result
+
+
+def first_word(line):
+    words = line.split(None, 1)
+    return words[0].lower() if words else ""
+
+
+class Variables:
+    """Variable values and substitution, following each window manager."""
+
+    def __init__(self, wm, resources):
+        self.wm = wm
+        self.resources = resources
+        self.values = {}
+
+    def _ordered(self):
+        return sorted(self.values.items(), key=lambda item: -len(item[0]))
+
+    def substitute(self, text):
+        if not self.values:
+            return text
+        ordered = self._ordered()
+        out = []
+        pos = 0
+        if self.wm == "i3":
+            # The nearest variable, matched ignoring case; longer names first.
+            lower = text.lower()
+            while True:
+                best = None
+                for name, value in ordered:
+                    found = lower.find(name.lower(), pos)
+                    if found >= 0 and (best is None or found < best[0]):
+                        best = (found, name, value)
+                if best is None:
+                    out.append(text[pos:])
+                    return "".join(out)
+                found, name, value = best
+                out.append(text[pos:found])
+                out.append(value)
+                pos = found + len(name)
+        # sway: at each $, the longest variable that is a prefix; $$ is a $.
+        while True:
+            found = text.find("$", pos)
+            if found < 0:
+                out.append(text[pos:])
+                return "".join(out)
+            out.append(text[pos:found])
+            if found > 0 and text[found - 1] == "\\" and \
+                    not (found > 1 and text[found - 2] == "\\"):
+                out.append("$")
+                pos = found + 1
+                continue
+            if text.startswith("$$", found):
+                out.append("$")
+                pos = found + 2
+                continue
+            for name, value in ordered:
+                if text.startswith(name, found):
+                    out.append(value)
+                    pos = found + len(name)
+                    break
+            else:
+                out.append("$")
+                pos = found + 1
+
+    def define(self, line):
+        """Record a set or set_from_resource line; False for other lines."""
+        word = first_word(line)
+        if word not in ("set", "set_from_resource"):
+            return False
+        if self.wm == "i3":
+            parts = line.split(None, 3 if word == "set_from_resource" else 2)
+            if len(parts) < 2 or not parts[1].startswith("$"):
+                return True
+            if word == "set":
+                if len(parts) > 2:
+                    self.values[parts[1]] = parts[2]
+                return True
+            value = lookup(self.resources, parts[2]) if len(parts) > 2 else None
+            self.values[parts[1]] = value if value is not None else (
+                parts[3] if len(parts) > 3 else "")
+            return True
+        # sway replaces variables in the whole line, except the name defined.
+        parts = line.split(None, 2)
+        if len(parts) < 2 or not parts[1].startswith("$"):
+            return True
+        name = parts[1]
+        rest = self.substitute(parts[2]) if len(parts) > 2 else ""
+        try:
+            args = shlex.split(rest, posix=False)
+        except ValueError:
+            args = rest.split()
+        if word == "set":
+            if args:
+                self.values[name] = " ".join(args)
+            return True
+        value = lookup(self.resources, args[0]) if args else None
+        if value is None:
+            value = " ".join(strip_quotes(arg) for arg in args[1:])
+        self.values[name] = value
+        return True
+
+
+def strip_quotes(text):
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+class Binding:
+    """One converted bindsym line and the presses it can win."""
+
+    def __init__(self, prefix, options, rest, groups=()):
+        self.prefix = prefix      # indentation, or sway's `mode NAME `
+        self.groups = groups      # layout groups it is limited to, () for any
+        self.options = options    # options before the key
+        self.rest = rest          # the rest of the line, as written
+        self.won = []             # (keycode, modifiers) this binding keeps
+
+
+class Partials:
+    def __init__(self, wm, resources, keyboard):
+        self.wm = wm
+        self.keyboard = keyboard
+        self.variables = Variables(wm, resources)
+        self.included = set()
+        self.order = 0
+        # (mode and flags, keycode, modifiers) -> ((class, order), Binding),
+        # or None for a bindcode already in the configuration.
+        self.claims = {}
+        # [path, text, entries]; entries: first line number -> include/binding
+        self.files = []
+
+    # -- reading ------------------------------------------------------------
+
+    def read_root(self, path):
+        """Variables of the root configuration before its partials."""
+        self.included.add(os.path.realpath(path))
+        with open(path, encoding="utf-8", errors="surrogateescape") as handle:
+            text = handle.read()
+        for _start, _end, line in logical_lines(text):
+            if GENERATED in line and first_word(line) == "include":
+                if self.wm == "sway":
+                    break
+                continue
+            if self.wm == "sway" or first_word(line) in ("set", "set_from_resource"):
+                self.variables.define(line)
+        return self
+
+    def read(self, path):
+        """Read one partial (and what it includes); its index in self.files,
+        or None when it is skipped as the window manager would skip it."""
+        real = os.path.realpath(path)
+        if real in self.included or not os.path.exists(real):
+            return None
+        self.included.add(real)
+        try:
+            with open(real, encoding="utf-8", errors="surrogateescape") as handle:
+                text = handle.read()
+        except OSError:
+            self.files.append([path, None, {}])
+            return len(self.files) - 1
+        index = len(self.files)
+        entries = {}
+        self.files.append([path, text, entries])
+        lines = logical_lines(text)
+        if self.wm == "i3":
+            # i3 reads every variable of a file before replacing them in it.
+            for _start, _end, line in lines:
+                self.variables.define(line)
+        blocks = []
+        for start, end, line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if self.wm == "sway":
+                self.variables.define(line)
+            if stripped == "}":
+                if blocks:
+                    blocks.pop()
+                continue
+            if stripped.endswith("{"):
+                blocks.append(self.variables.substitute(stripped[:-1]).strip())
+                continue
+            word = first_word(stripped)
+            mode = "default"
+            body = line
+            prefix = line[:len(line) - len(line.lstrip())]
+            if blocks:
+                head = blocks[-1].split(None, 1)
+                if len(blocks) > 1 or not head or head[0].lower() != "mode":
+                    continue  # bar, input and other blocks
+                mode = mode_name(head[1] if len(head) > 1 else "")
+            elif word == "mode" and self.wm == "sway":
+                split = split_mode_prefix(stripped)
+                if split is None:
+                    continue
+                name, offset = split
+                mode = mode_name(self.variables.substitute(name))
+                prefix = line[:len(line) - len(stripped)] + stripped[:offset]
+                body = stripped[offset:]
+                word = first_word(body)
+            if word == "include" and not blocks:
+                pattern = self.variables.substitute(stripped.split(None, 1)[1]) \
+                    if len(stripped.split(None, 1)) > 1 else ""
+                children = []
+                for child in expand(pattern, os.path.dirname(real)):
+                    child_index = self.read(child)
+                    if child_index is not None:
+                        children.append(child_index)
+                entries[start] = ("include", end, prefix, children)
+            elif word in ("bindsym", "bindcode", "bind"):
+                item = self.binding(word, body, mode, prefix)
+                if item is not None:
+                    entries[start] = ("binding", end, item)
+        return index
+
+    def binding(self, word, body, mode, prefix):
+        self.order += 1
+        tokens = [(m.start(), m.group()) for m in re.finditer(r"\S+", body)][1:]
+        options, position, key_text = [], None, ""
+        for start, raw in tokens:
+            value = self.variables.substitute(raw)
+            if re.search(r"\s", value):
+                return None
+            if value.startswith("--"):
+                options.append(value)
+                continue
+            position, key_text = start + len(raw), value
+            break
+        if position is None:
+            return None
+        rest = body[position:]
+        if word == "bindsym":
+            return self._bindsym(options, key_text, rest, mode, prefix)
+        self._claim_bindcode(word, options, key_text, rest, mode)
+        return None
+
+    def _parse_key(self, text):
+        """(modifier mask, key name, layout groups), or None when the
+        expression is not a plain set of modifiers and one key. The groups are
+        the GroupN qualifiers as a sorted tuple, () when there are none."""
+        groups = set()
+        if self.wm == "i3":
+            mods, pos = 0, 0
+            while True:
+                if text.startswith("+", pos):
+                    pos += 1
+                    continue
+                for literal in I3_MODIFIERS:
+                    if text[pos:pos + len(literal)].lower() == literal.lower():
+                        if literal == "$mod":
+                            return None
+                        if literal == "Mode_switch":  # i3: same as Group2
+                            groups.add(2)
+                        elif literal.startswith("Group"):
+                            groups.add(int(literal[-1]))  # every group as written
+                        else:
+                            mods |= MOD_MASKS["Control" if literal == "Ctrl" else literal]
+                        pos += len(literal)
+                        break
+                else:
+                    break
+            key = re.match(r"[^\s\],;]*", text[pos:]).group()
+            return (mods, key, tuple(sorted(groups))) if key and key == text[pos:] else None
+        mods, keys = 0, []
+        for part in text.split("+"):
+            if part == "Mode_switch":
+                return None
+            if part.startswith("Group"):
+                if groups or not re.fullmatch(r"Group[1-4]", part):
+                    return None  # sway refuses a second or an invalid group
+                groups.add(int(part[-1]))
+            elif part.lower() in SWAY_MODIFIERS:
+                mods |= SWAY_MODIFIERS[part.lower()]
+            else:
+                keys.append(part)
+        return (mods, keys[0], tuple(groups)) if len(keys) == 1 and keys[0] else None
+
+    def _bindsym(self, options, key_text, rest, mode, prefix):
+        parsed = self._parse_key(key_text)
+        if parsed is None:
+            return None
+        mods, name, groups = parsed
+        if self.wm == "sway":
+            if any(option not in SWAY_FLAGS and not option.startswith("--input-device=")
+                   for option in options) or SWAY_MOUSE_FLAGS & set(options):
+                return None
+        elif any(option not in I3_OPTIONS for option in options):
+            return None
+        sym = self.keyboard.keysym(name, self.wm == "sway")
+        if not sym or sym not in self.keyboard.characters:
+            return None
+        if self.wm == "i3":
+            presses = self.keyboard.i3_presses(mods, sym)
+            dedup = (mode, self._i3_release(options, rest), groups)
+        else:
+            presses = self.keyboard.sway_presses(mods, sym, "--to-code" in options)
+            dedup = self._sway_dedup(mode, options) + (groups,)
+            options = [o for o in options if o != "--to-code"]
+        binding = Binding(prefix, options, rest, groups)
+        for code, pressed, kind in presses:
+            self._offer((dedup, code, pressed), kind, binding)
+        return binding
+
+    def _i3_release(self, options, rest):
+        """i3 also takes its options between the key and the command."""
+        after = []
+        for word in self.variables.substitute(rest).split():
+            if word not in I3_OPTIONS:
+                break
+            after.append(word)
+        return "--release" in options + after
+
+    def _sway_dedup(self, mode, options):
+        device = next((o for o in options if o.startswith("--input-device=")), "*")
+        return (mode, "--release" in options, "--locked" in options,
+                "--inhibited" in options, device)
+
+    def _claim_bindcode(self, word, options, key_text, rest, mode):
+        """Existing bindcodes keep their presses: converted bindings give way."""
+        parsed = self._parse_key(key_text)
+        if parsed is None or not parsed[1].isdigit():
+            return
+        if self.wm == "i3":
+            dedup = (mode, self._i3_release(options, rest), parsed[2])
+        else:
+            dedup = self._sway_dedup(mode, options) + (parsed[2],)
+        self._offer((dedup, int(parsed[1]), parsed[0]), CODE, None, existing=True)
+
+    def _offer(self, key, kind, binding, existing=False):
+        rank = (-1 if existing else kind if self.wm == "sway" else 0, self.order)
+        current = self.claims.get(key)
+        if current is None or rank < current[0]:
+            self.claims[key] = (rank, binding)
+
+    # -- writing ------------------------------------------------------------
+
+    def resolve(self):
+        for key, (_rank, binding) in self.claims.items():
+            if binding is not None:
+                _dedup, code, pressed = key
+                binding.won.append((code, pressed))
+        for _path, _text, entries in self.files:
+            for entry in entries.values():
+                if entry[0] == "binding":
+                    entry[2].won.sort(key=lambda press: (press[1], press[0]))
+
+    def render(self, index, directory, outputs):
+        """Path for the window manager to include for self.files[index]."""
+        path, text, entries = self.files[index]
+        if text is None or not entries:
+            return self._plain(path, directory, outputs)
+        lines = text.split("\n")
+        out = []
+        skip_until = -1
+        for number, line in enumerate(lines):
+            if number <= skip_until:
+                continue
+            entry = entries.get(number)
+            if entry is None:
+                out.append(line)
+                continue
+            skip_until = entry[1]
+            if entry[0] == "include":
+                _kind, _end, prefix, children = entry
+                out.append(f"{prefix}# {line.strip()}")
+                for child in children:
+                    target = self.render(child, directory, outputs)
+                    if target:
+                        out.append(f"{prefix}include {target}")
+                continue
+            binding = entry[2]
+            original = " ".join(lines[number:entry[1] + 1]).strip()
+            if not binding.won:
+                out.append(f"{binding.prefix}# no US key runs this: {original}")
+            options = "".join(option + " " for option in binding.options)
+            for code, pressed in binding.won:
+                key = "+".join([f"Group{group}" for group in binding.groups]
+                               + [MOD_NAMES[i] for i in range(8) if pressed & (1 << i)]
+                               + [str(code)])
+                out.append(f"{binding.prefix}bindcode {options}{key}{binding.rest}")
+        content = "\n".join(out)
+        digest = hashlib.sha256(f"{path}\0{content}".encode("utf-8", "surrogateescape"))
+        digest = digest.hexdigest()[:16]
+        target = os.path.join(directory, f"{digest}-{safe_name(path)}")
+        if not os.path.exists(target):
+            temporary = f"{target}.{os.getpid()}.tmp"
+            with open(temporary, "w", encoding="utf-8", errors="surrogateescape") as handle:
+                handle.write(content)
+            os.replace(temporary, target)
+        else:
+            os.utime(target)
+        outputs.add(os.path.basename(target))
+        return target
+
+    def _plain(self, path, directory, outputs):
+        if is_safe(path):
+            return path
+        link = link_to(path, directory)
+        outputs.add(os.path.basename(link))
+        return link
+
+
+def mode_name(text):
+    words = text.split()
+    if words and words[0] == "--pango_markup":
+        text = text.split(None, 1)[1] if len(words) > 1 else ""
+    return strip_quotes(text.strip())
+
+
+def split_mode_prefix(text):
+    """sway's `mode NAME bindsym ...` form: (mode name, offset of the binding)."""
+    match = re.match(r'mode\s+((?:--pango_markup\s+)?(?:"[^"]*"|\'[^\']*\'|\S+))\s+(\S.*)$',
+                     text, re.I)
+    if not match or first_word(match.group(2)) not in ("bindsym", "bindcode", "bind"):
+        return None
+    return match.group(1), match.start(2)
+
+
+_LIBC = None
+
+
+def expand(pattern, directory):
+    """Paths an include pattern names: wordexp(3) in the file's directory."""
+    global _LIBC
+
+    class WordExp(ctypes.Structure):
+        _fields_ = [("we_wordc", ctypes.c_size_t),
+                    ("we_wordv", ctypes.POINTER(ctypes.c_char_p)),
+                    ("we_offs", ctypes.c_size_t)]
+
+    if _LIBC is None:
+        _LIBC = ctypes.CDLL("libc.so.6")
+    previous = os.getcwd()
+    words = WordExp()
+    try:
+        os.chdir(directory)
+        if _LIBC.wordexp(os.fsencode(pattern), ctypes.byref(words), 0) != 0:
+            return []
+        try:
+            return [os.path.join(directory, os.fsdecode(words.we_wordv[i]))
+                    for i in range(words.we_wordc)]
+        finally:
+            _LIBC.wordfree(ctypes.byref(words))
+    finally:
+        os.chdir(previous)
+
+
+def directory_files(path):
+    """`include PATH/*` for a directory: the visible entries, in the locale's
+    order. Any other existing path stands for itself."""
+    if not os.path.isdir(path):
+        return [path] if os.path.lexists(path) else []
+    try:
+        names = [name for name in os.listdir(path) if not name.startswith(".")]
+    except OSError:
+        return []
+    return [os.path.join(path, name) for name in sorted(names, key=locale.strxfrm)]
+
+
+def is_safe(path):
+    # The include line splits the printed words at whitespace, and the
+    # keybinding viewer expands each line of the sway list as a pattern.
+    return not re.search(r"[\s*?[\\]", path)
+
+
+def safe_name(path):
+    return re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path)) or "partial"
+
+
+def link_to(path, directory):
+    if directory is None:
+        return None
+    digest = hashlib.sha256(os.fsencode(path)).hexdigest()[:16]
+    link = os.path.join(directory, f"{digest}-link")
+    if os.path.islink(link) and os.readlink(link) == path:
+        os.utime(link, follow_symlinks=False)
+        return link
+    temporary = f"{link}.{os.getpid()}.tmp"
+    os.symlink(path, temporary)
+    os.replace(temporary, link)
+    return link
+
+
+def output_directory(wm):
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(
+        os.path.expanduser("~"), ".cache")
+    directory = os.path.join(base, GENERATED, wm)
+    if not is_safe(directory):
+        directory = os.path.join("/tmp", f"{GENERATED}-{os.getuid()}", wm)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    if os.stat(directory).st_uid != os.getuid() or os.path.islink(directory):
+        raise RuntimeError(f"{directory} is not owned by this user")
+    return directory
+
+
+def tidy(directory, keep):
+    """Remove earlier generations; the window manager has read them."""
+    now = time.time()
+    for name in os.listdir(directory):
+        path = os.path.join(directory, name)
+        try:
+            if name not in keep and now - os.lstat(path).st_mtime > 60:
+                os.unlink(path)
+        except OSError:
+            pass
+
+
+def unchanged(directories):
+    paths = []
+    for directory in directories:
+        for path in directory_files(directory):
+            if is_safe(path):
+                paths.append(path)
+            else:
+                try:
+                    paths.append(link_to(path, output_directory("links")))
+                except OSError as error:
+                    log(f"cannot include {path!r}: {error}")
+    return paths
+
+
+def positional(wm, root, directories, resources):
+    partials = Partials(wm, resources, USKeyboard()).read_root(root)
+    tops = []
+    for directory in directories:
+        for path in directory_files(directory):
+            index = partials.read(path)
+            if index is not None:
+                tops.append(index)
+    partials.resolve()
+    directory = output_directory(wm)
+    outputs = set()
+    paths = [partials.render(index, directory, outputs) for index in tops]
+    tidy(directory, outputs)
+    return paths
+
+
+def write_viewer_list(wm, paths):
+    """$XDG_RUNTIME_DIR/regolith-wm-positional-bindings/WM-partials: an include
+    line per printed path. The sway config includes it after the partials for
+    the keybinding viewer, which reads the files itself and does not run the
+    command; sway has included each of those files already and skips them."""
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base or not os.path.isabs(base):
+        return
+    directory = os.path.join(base, GENERATED)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    target = os.path.join(directory, f"{wm}-partials")
+    temporary = f"{target}.{os.getpid()}.tmp"
+    with open(temporary, "wb") as handle:
+        handle.write(b"".join(b"include " + os.fsencode(path) + b"\n" for path in paths))
+    os.replace(temporary, target)
+
+
+def main(argv):
+    if len(argv) < 3 or argv[0] not in ("i3", "sway"):
+        log("usage: regolith-wm-positional-bindings i3|sway ROOT-CONFIG PATH...")
+        return 2
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+    wm, root, directories = argv[0], argv[1], argv[2:]
+    paths = None
+    resources = read_resources(wm)
+    if (lookup(resources, RESOURCE) or "").strip() == "yes":
+        try:
+            paths = positional(wm, root, directories, resources)
+        except Exception as error:  # Never leave the session without partials.
+            log(f"positional bindings unavailable, including partials as written: {error}")
+    if paths is None:
+        paths = unchanged(directories)
+    paths = [path for path in paths if path]
+    if wm == "sway":
+        try:
+            write_viewer_list(wm, paths)
+        except OSError as error:
+            log(f"cannot write the list for the keybinding viewer: {error}")
+    # File names are bytes: print them as they are, whatever the locale.
+    sys.stdout.buffer.write(b"".join(os.fsencode(path) + b"\n" for path in paths))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
