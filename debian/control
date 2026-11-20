@@ -8,6 +8,7 @@ Build-Depends: debhelper (>= 11),
   gir1.2-glib-2.0 <!nocheck>,
   jq <!nocheck>,
   libglib2.0-bin <!nocheck>,
+  libxkbcommon0 <!nocheck>,
   libxml2-utils <!nocheck>,
   python3 <!nocheck>,
   python3-gi <!nocheck>
@@ -17,6 +18,8 @@ Homepage: https://github.com/regolith-linux/regolith-wm-config
 Package: regolith-wm-config
 Architecture: any
 Depends: ${misc:Depends},
+  libxkbcommon0,
+  python3,
   xdg-utils
 Recommends:
   regolith-wm-base-launchers,
@@ -39,8 +42,9 @@ Package: regolith-i3-root-config
 Architecture: any
 Depends: ${misc:Depends},
   i3-wm (>= 4.20),
-  regolith-wm-config,
-  regolith-i3-dbus-activation
+  regolith-wm-config (= ${binary:Version}),
+  regolith-i3-dbus-activation,
+  x11-xserver-utils
 Recommends: regolith-i3-compositor,
   regolith-wm-quick-toggles,
   regolith-i3-control-center-default | regolith-i3-control-center,
@@ -61,8 +65,9 @@ Package: regolith-sway-root-config
 Architecture: any
 Depends: ${misc:Depends},
   sway-regolith,
-  regolith-wm-config,
-  regolith-sway-dbus-activation
+  regolith-wm-config (= ${binary:Version}),
+  regolith-sway-dbus-activation,
+  trawldb
 Recommends: regolith-sway-background,
   regolith-wm-quick-toggles,
   regolith-sway-clamshell,

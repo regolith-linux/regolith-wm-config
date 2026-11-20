@@ -147,17 +147,14 @@ set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 # WM Config Partials
 ###############################################################################
 
-# Include common partials
-include /usr/share/regolith/common/config.d/*
-
-# Include any regolith i3 partials
-include /usr/share/regolith/i3/config.d/*
-
-# Include any partials common between i3 and sway sessions
-include $HOME/.config/regolith3/common-wm/config.d/*
-
-# Include any user i3 partials
-include $HOME/.config/regolith3/i3/config.d/*
+# Include, in this order, the common partials, any regolith i3 partials, any
+# partials common between i3 and sway sessions and any user i3 partials.
+# regolith-wm-positional-bindings lists the files of each folder, as
+# `include FOLDER/*` would. With the X resource
+# wm.keyboard.positional_bindings set to "yes", it lists copies whose key
+# bindings stay on the keys they occupy on a US keyboard, whatever keyboard
+# layout is active.
+include $(/usr/bin/regolith-wm-positional-bindings i3 /etc/regolith/i3/config /usr/share/regolith/common/config.d /usr/share/regolith/i3/config.d $HOME/.config/regolith3/common-wm/config.d $HOME/.config/regolith3/i3/config.d)
 
 # Start the systemd target manually is the session is not started by systemd
 # Notify systemd about successful session start otherwise
