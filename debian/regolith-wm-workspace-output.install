@@ -1,0 +1,2 @@
+usr/share/regolith/common/config.d/41_workspace-output
+scripts/regolith-workspace-output     usr/bin
