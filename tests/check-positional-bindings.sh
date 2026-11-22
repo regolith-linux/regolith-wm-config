@@ -78,7 +78,9 @@ for value in "" "wm.keyboard.positional_bindings: no" "wm.keyboard.positional_bi
     for wm in i3 sway; do
         if ! run "$wm"; then fail "$wm [$value]: exit status"; continue; fi
         # the names the include line would split or expand come out as links
-        resolved=$(while IFS= read -r p; do
+        # (read byte by byte: in a UTF-8 locale, bash before 5.3 takes the
+        # newline after the name that is not UTF-8 into that line)
+        resolved=$(LC_ALL=C; while IFS= read -r p; do
             case $p in "$XDG_RUNTIME_DIR"/*) readlink "$p" ;; *) printf '%s\n' "$p" ;; esac
         done < "$WORK/out")
         if [ "$resolved" = "$(glob_list)" ]; then pass "$wm [$value]: the partials as include FOLDER/* takes them"
