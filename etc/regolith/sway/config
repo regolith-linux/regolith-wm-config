@@ -168,14 +168,14 @@ set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 # WM Config Partials
 ###############################################################################
 
-# Include common partials
-include /usr/share/regolith/common/config.d/*
+# Include, in this order, the common partials, any regolith sway partials, any
+# partials common between i3 and sway sessions and any user sway partials.
+# regolith-wm-positional-bindings lists the files of each folder, as
+# `include FOLDER/*` would. With the resource wm.keyboard.positional_bindings
+# set to "yes", it lists copies whose key bindings stay on the keys they
+# occupy on a US keyboard, whatever keyboard layout is active.
+include $(/usr/bin/regolith-wm-positional-bindings sway /etc/regolith/sway/config /usr/share/regolith/common/config.d /usr/share/regolith/sway/config.d $HOME/.config/regolith3/common-wm/config.d $HOME/.config/regolith3/sway/config.d)
 
-# Include any regolith sway partials
-include /usr/share/regolith/sway/config.d/*
-
-# Include any partials common between i3 and sway sessions
-include $HOME/.config/regolith3/common-wm/config.d/*
-
-# Include any user wm partials
-include $HOME/.config/regolith3/sway/config.d/*
+# The same files again, for the keybinding viewer, which reads this config
+# itself and does not run commands. sway includes a file only once.
+include $XDG_RUNTIME_DIR/regolith-wm-positional-bindings/sway-partials
