@@ -1,1 +1,2 @@
 usr/share/regolith/i3/config.d/86_unclutter
+scripts/regolith-i3-hide-pointer usr/bin
