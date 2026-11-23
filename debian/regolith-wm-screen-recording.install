@@ -1,0 +1,3 @@
+scripts/regolith-screen-record     usr/bin
+usr/share/regolith/i3/config.d/80_screen_recording
+usr/share/regolith/sway/config.d/80_screen_recording
