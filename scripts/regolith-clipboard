@@ -1,0 +1,671 @@
+#!/usr/bin/python3
+"""Clipboard history for the Regolith sessions, picked through ilia.
+
+Usage:
+  regolith-clipboard daemon [SIZE]  record copies and keep the clipboard when
+                                    the copying application exits; the window
+                                    manager config starts it
+  regolith-clipboard pick [ARG...]  choose an entry and put it back on the
+                                    clipboard
+  regolith-clipboard delete [ARG...]
+                                    choose an entry and remove it
+  regolith-clipboard clear [ARG...] remove every entry, after a confirmation
+  regolith-clipboard copy           put standard input (UTF-8 text) on the
+                                    clipboard and in the history
+
+The ARGs of pick, delete and clear are passed on to ilia; the keys pass the
+look's stylesheet (-t $ilia.stylesheet), as the Look Selector key does.
+
+Copies to the CLIPBOARD selection are recorded, as text (UTF-8) or as a PNG
+image when the copy offers image/png. The primary selection, empty copies and
+copies offering x-kde-passwordManagerHint (password managers) are not
+recorded, and the latter are never written to disk. The history keeps the
+newest SIZE entries (100 by default), most recent first, without duplicates.
+
+The history lives in $XDG_STATE_HOME/regolith/clipboard (by default
+~/.local/state/regolith/clipboard), so both sessions share it and it survives
+logging out. Each entry is a file of its own: deleting, clearing or dropping
+an entry deletes its file, so its content is not left behind on disk.
+
+In sway (WAYLAND_DISPLAY is set) the daemon watches the clipboard with
+wl-paste and puts content back with wl-copy; in i3 it watches the clipboard
+with GTK and puts content back with xclip. The content to put back when its
+owner exits is kept in $XDG_RUNTIME_DIR only. The daemon ends when the window
+manager that started it exits (not on an i3 restart, which keeps the process).
+"""
+
+import fcntl
+import hashlib
+import os
+import re
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+
+PASSWORD_HINT = "x-kde-passwordManagerHint"
+PNG_TYPE = "image/png"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# Text types whose content is UTF-8, in order of preference.
+TEXT_TYPES = ("text/plain;charset=utf-8", "UTF8_STRING", "text/plain")
+DEFAULT_SIZE = 100
+# How often the daemon checks that its window manager still runs, in seconds.
+WM_CHECK_SECONDS = 2
+PREVIEW_CHARS = 80
+PREVIEW_BYTES = 64 * 1024
+CLEAR_ROW = "Clear the clipboard history"
+ENTRY_NAME = re.compile(r"^[0-9a-f]{64}\.(txt|png)$")
+
+
+def warn(message):
+    print(f"regolith-clipboard: {message}", file=sys.stderr)
+
+
+def is_wayland():
+    return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
+def private_dir(path):
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+def state_dir():
+    base = os.environ.get("XDG_STATE_HOME", "")
+    if not os.path.isabs(base):
+        base = os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "regolith")
+
+
+def runtime_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR", "")
+    if os.path.isabs(base):
+        return private_dir(os.path.join(base, "regolith-clipboard"))
+    return private_dir(os.path.join(tempfile.gettempdir(),
+                                    f"regolith-clipboard-{os.getuid()}"))
+
+
+def write_file(path, data):
+    """Replace path with data atomically, readable by the user only."""
+    directory = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".new-")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        unlink(tmp)
+        raise
+
+
+def read_file(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def unlink(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+class Lock:
+    """An exclusive flock on a file, held for the duration of a with block."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        os.close(self.fd)
+        return False
+
+
+def entry_name(kind, data):
+    return f"{hashlib.sha256(data).hexdigest()}.{kind}"
+
+
+def entry_kind(name):
+    return name.rsplit(".", 1)[1]
+
+
+class History:
+    """The entries, one file each, and an index listing them newest first."""
+
+    def __init__(self):
+        self.dir = os.path.join(state_dir(), "clipboard")
+        self.index = os.path.join(self.dir, "index")
+
+    def lock(self):
+        private_dir(self.dir)
+        return Lock(os.path.join(self.dir, "lock"))
+
+    def path(self, name):
+        return os.path.join(self.dir, name)
+
+    def entries(self):
+        data = read_file(self.index) or b""
+        names = []
+        seen = set()
+        for name in data.decode("ascii", "replace").split():
+            if (ENTRY_NAME.match(name) and name not in seen
+                    and os.path.isfile(self.path(name))):
+                names.append(name)
+                seen.add(name)
+        return names
+
+    def read(self, name):
+        return read_file(self.path(name))
+
+    def _commit(self, names):
+        """Write the index, then delete every entry file it doesn't list."""
+        write_file(self.index, "".join(f"{n}\n" for n in names).encode())
+        keep = set(names) | {"index", "lock"}
+        for other in os.listdir(self.dir):
+            if other not in keep:
+                unlink(self.path(other))
+
+    # The methods below must be called with the lock held.
+
+    def add(self, kind, data, size):
+        name = entry_name(kind, data)
+        if not os.path.isfile(self.path(name)):
+            write_file(self.path(name), data)
+        names = [name] + [n for n in self.entries() if n != name]
+        self._commit(names[:max(size, 1)])
+        return name
+
+    def raise_to_top(self, name):
+        names = self.entries()
+        if name in names:
+            names.remove(name)
+            self._commit([name] + names)
+
+    def delete(self, name):
+        self._commit([n for n in self.entries() if n != name])
+
+    def clear(self):
+        self._commit([])
+
+
+def png_size(path):
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != PNG_SIGNATURE or head[12:16] != b"IHDR":
+        return None
+    width, height = head[16:20], head[20:24]
+    return int.from_bytes(width, "big"), int.from_bytes(height, "big")
+
+
+def human_size(count):
+    if count < 1024:
+        return f"{count} bytes"
+    if count < 1024 * 1024:
+        return f"{count / 1024:.0f} KB"
+    return f"{count / (1024 * 1024):.1f} MB"
+
+
+def describe(history, name):
+    """A one-line description of an entry: an image's size, or text."""
+    path = history.path(name)
+    if entry_kind(name) == "png":
+        size = png_size(path)
+        dims = f"{size[0]}x{size[1]}" if size else "?x?"
+        try:
+            length = human_size(os.path.getsize(path))
+        except OSError:
+            length = "?"
+        return f"[image {dims}, {length}]"
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(PREVIEW_BYTES)
+    except OSError:
+        return ""
+    text = head.decode("utf-8", "replace")
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    if not first:
+        return "[blank text]"
+    if len(first) > PREVIEW_CHARS:
+        first = first[:PREVIEW_CHARS] + "…"
+    return first
+
+
+def choose(rows, label, icon, ilia_args=()):
+    """Show rows in ilia's text list; return the printed text, or None."""
+    argv = ["ilia", "-p", "textlist", "-l", label, "-i", icon, *ilia_args]
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE)
+    except OSError as error:
+        warn(f"cannot run ilia: {error}")
+        return None
+
+    def feed():
+        # ilia may exit as soon as the user chooses, before reading every row.
+        try:
+            proc.stdin.write("".join(f"{row}\n" for row in rows).encode())
+            proc.stdin.close()
+        except OSError:
+            pass
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    answer = proc.stdout.read()
+    proc.wait()
+    writer.join(timeout=1)
+    if not answer:
+        return None
+    return answer.decode("utf-8", "replace").rstrip("\n")
+
+
+def choose_entry(history, label, icon, ilia_args=()):
+    names = history.entries()
+    rows = {}
+    for number, name in enumerate(names, 1):
+        rows[f"{number}: {describe(history, name)}"] = name
+    return rows.get(choose(list(rows), label, icon, ilia_args))
+
+
+def put_on_clipboard(kind, data):
+    """Own the clipboard with data, in a background wl-copy and/or xclip.
+
+    In sway, xclip then owns the clipboard of Xwayland as well: sway lets X11
+    applications read the Wayland clipboard only while one of them has the
+    focus, but they can always read a clipboard owned by an X11 client.
+    """
+    commands = []
+    if is_wayland():
+        mime = PNG_TYPE if kind == "png" else "text/plain;charset=utf-8"
+        commands.append(["wl-copy", "--type", mime])
+    if os.environ.get("DISPLAY"):
+        target = PNG_TYPE if kind == "png" else "UTF8_STRING"
+        commands.append(["xclip", "-selection", "clipboard", "-t", target,
+                         "-i"])
+    for argv in commands:
+        # Both fork a process that keeps serving the content: give it no
+        # pipe it could keep open.
+        try:
+            subprocess.run(argv, input=data, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, check=False, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            warn(f"cannot set the clipboard with {argv[0]}: {error}")
+
+
+def window_manager():
+    """The IPC socket and process ID of the window manager of this session.
+
+    i3 and sway pass their socket to the programs they start; the process
+    behind it stays the same across an i3 restart, which execs in place.
+    """
+    path = os.environ.get("SWAYSOCK") or os.environ.get("I3SOCK")
+    if not path:
+        return None, None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5)
+            sock.connect(path)
+            creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                    struct.calcsize("3i"))
+    except OSError:
+        return path, None
+    return path, struct.unpack("3i", creds)[0] or None
+
+
+def alive(pid):
+    """Whether the process runs; a zombie that nobody reaped yet has exited."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii",
+                  errors="replace") as fh:
+            return fh.read().rpartition(")")[2].split()[0] not in ("Z", "X")
+    except (OSError, IndexError):
+        return False
+
+
+def session_size():
+    """The history size the daemon of this session was started with."""
+    data = read_file(os.path.join(runtime_dir(), "size"))
+    return parse_size(data.decode() if data else "")
+
+
+def parse_size(text):
+    try:
+        size = int(str(text).strip())
+    except ValueError:
+        return DEFAULT_SIZE
+    return size if size > 0 else DEFAULT_SIZE
+
+
+class Recorder:
+    """What both watchers do with a copy, or with the owner's exit.
+
+    current is the content to put back when its owner exits; it is None after
+    an empty or unsupported copy, and after a sensitive one (sensitive is
+    then True, so nothing is put back). restoring names the content put back,
+    until something else is copied, so that the copy events putting it back
+    causes don't record it again: it may have been deleted from the history
+    meanwhile.
+    """
+
+    def __init__(self, history, size):
+        self.history = history
+        self.size = size
+        self.current = None
+        self.sensitive = False
+        self.restoring = None
+
+    def copied(self, kind, data):
+        self.sensitive = False
+        self.current = (kind, data) if data else None
+        if not data:
+            return
+        name = entry_name(kind, data)
+        if name == self.restoring:
+            return  # The content put back, seen again.
+        self.restoring = None
+        with self.history.lock():
+            self.history.add(kind, data, self.size)
+
+    def copied_sensitive(self):
+        self.sensitive = True
+        self.current = None
+
+    def copied_other(self):
+        self.sensitive = False
+        self.current = None
+
+    def owner_gone(self):
+        if self.sensitive or self.current is None:
+            self.sensitive = False
+            return
+        kind, data = self.current
+        self.restoring = entry_name(kind, data)
+        put_on_clipboard(kind, data)
+
+
+# -- sway: wl-paste --watch runs "regolith-clipboard event" on each change ---
+
+class WaylandRecorder(Recorder):
+    """A Recorder whose state lives in the runtime directory between events."""
+
+    def __init__(self, history, size, directory):
+        super().__init__(history, size)
+        self.dir = directory
+        for kind in ("txt", "png"):
+            data = read_file(self._current_path(kind))
+            if data:
+                self.current = (kind, data)
+        self.sensitive = os.path.exists(os.path.join(directory, "sensitive"))
+        restoring = read_file(os.path.join(directory, "restoring"))
+        self.restoring = restoring.decode() if restoring else None
+
+    def _current_path(self, kind):
+        return os.path.join(self.dir, f"current.{kind}")
+
+    def save(self):
+        for kind in ("txt", "png"):
+            if self.current and self.current[0] == kind:
+                write_file(self._current_path(kind), self.current[1])
+            else:
+                unlink(self._current_path(kind))
+        sensitive = os.path.join(self.dir, "sensitive")
+        if self.sensitive:
+            write_file(sensitive, b"")
+        else:
+            unlink(sensitive)
+        restoring = os.path.join(self.dir, "restoring")
+        if self.restoring:
+            write_file(restoring, self.restoring.encode())
+        else:
+            unlink(restoring)
+
+
+def wl_paste(*args):
+    try:
+        proc = subprocess.run(["wl-paste", *args], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def wayland_event(recorder):
+    state = os.environ.get("CLIPBOARD_STATE", "data")
+    if state in ("nil", "clear"):
+        recorder.owner_gone()
+        return
+    listed = wl_paste("--list-types") or b""
+    types = listed.decode("utf-8", "replace").split("\n")
+    if state == "sensitive" or PASSWORD_HINT in types:
+        recorder.copied_sensitive()
+        return
+    if PNG_TYPE in types:
+        kind, mime = "png", PNG_TYPE
+    else:
+        kind, mime = "txt", next((t for t in TEXT_TYPES if t in types), None)
+    if mime is None:
+        recorder.copied_other()
+        return
+    recorder.copied(kind, wl_paste("--no-newline", "--type", mime) or b"")
+
+
+def cmd_event(_args):
+    # wl-paste pipes the content in one of its types to us: read it all, so
+    # the copying application doesn't get a broken pipe.
+    if not sys.stdin.isatty():
+        try:
+            while sys.stdin.buffer.read(65536):
+                pass
+        except (OSError, ValueError):
+            pass
+    directory = runtime_dir()
+    with Lock(os.path.join(directory, "event.lock")):
+        recorder = WaylandRecorder(History(), session_size(), directory)
+        wayland_event(recorder)
+        recorder.save()
+    return 0
+
+
+# -- i3: GTK reports clipboard owner changes ---------------------------------
+
+def run_x11(history, size, wm_pid):
+    os.environ["GDK_BACKEND"] = "x11"
+    os.environ["NO_AT_BRIDGE"] = "1"  # No accessibility bus: no windows.
+    import gi
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gdk, GLib, Gtk
+
+    if not Gtk.init_check(None)[0]:
+        warn("cannot open the X display")
+        return 1
+    recorder = Recorder(history, size)
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    serial = [0]
+
+    def current(number):
+        # A reply for an older copy than the last one is stale.
+        return number == serial[0]
+
+    def got_data(_clipboard, selection, number, kind):
+        if current(number):
+            data = selection.get_data() if selection.get_length() > 0 else b""
+            recorder.copied(kind, data or b"")
+
+    def got_text(_clipboard, text, number):
+        if current(number):
+            recorder.copied("txt", text.encode("utf-8") if text else b"")
+
+    def got_targets(_clipboard, selection, number):
+        if not current(number):
+            return
+        found, atoms = selection.get_targets()
+        names = [atom.name() for atom in atoms] if found else []
+        if PASSWORD_HINT in names:
+            recorder.copied_sensitive()
+        elif PNG_TYPE in names:
+            clipboard.request_contents(Gdk.Atom.intern(PNG_TYPE, False),
+                                       got_data, number, "png")
+        elif any(t in names for t in TEXT_TYPES):
+            target = next(t for t in TEXT_TYPES if t in names)
+            clipboard.request_contents(Gdk.Atom.intern(target, False),
+                                       got_data, number, "txt")
+        elif found and selection.targets_include_text():
+            clipboard.request_text(got_text, number)
+        else:
+            recorder.copied_other()
+
+    def new_owner():
+        serial[0] += 1
+        clipboard.request_contents(Gdk.Atom.intern("TARGETS", False),
+                                   got_targets, serial[0])
+
+    def owner_changed(_clipboard, event):
+        new = event.reason == Gdk.OwnerChange.NEW_OWNER
+        if new and event.owner is not None:
+            new_owner()
+        else:
+            serial[0] += 1
+            recorder.owner_gone()
+
+    def wm_running():
+        if alive(wm_pid):
+            return True
+        Gtk.main_quit()
+        return False
+
+    clipboard.connect("owner-change", owner_changed)
+    new_owner()  # Record what was copied before the daemon started.
+    if wm_pid:
+        GLib.timeout_add_seconds(WM_CHECK_SECONDS, wm_running)
+    Gtk.main()
+    return 0
+
+
+# -- commands ----------------------------------------------------------------
+
+def watch_wayland(wm_pid):
+    """Run wl-paste --watch until it ends or the window manager exits."""
+    script = os.path.realpath(sys.argv[0])
+    try:
+        proc = subprocess.Popen(["wl-paste", "--watch", script, "event"],
+                                stdin=subprocess.DEVNULL)
+    except OSError as error:
+        warn(f"cannot watch the clipboard with wl-paste: {error}")
+        return 1
+    while True:
+        try:
+            return proc.wait(timeout=WM_CHECK_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        if wm_pid and not alive(wm_pid):
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return 0
+
+
+def cmd_daemon(args):
+    size = parse_size(args[0] if args else DEFAULT_SIZE)
+    directory = runtime_dir()
+    # One daemon per window manager: named after its socket, the lock of a
+    # new session doesn't wait for the daemon of the previous one to end.
+    wm_socket, wm_pid = window_manager()
+    suffix = f".{os.path.basename(wm_socket)}" if wm_socket else ""
+    lock_path = os.path.join(directory, f"daemon{suffix}.lock")
+    lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0  # Already running for this window manager.
+    write_file(os.path.join(directory, "size"), f"{size}\n".encode())
+    try:
+        if is_wayland():
+            return watch_wayland(wm_pid)
+        return run_x11(History(), size, wm_pid)
+    finally:
+        unlink(lock_path)
+
+
+def cmd_pick(args):
+    history = History()
+    name = choose_entry(history, "Clipboard History", "edit-paste", args)
+    if name is None:
+        return 0
+    with history.lock():
+        data = history.read(name)
+        if data is None:
+            return 0
+        history.raise_to_top(name)
+    put_on_clipboard(entry_kind(name), data)
+    return 0
+
+
+def cmd_delete(args):
+    history = History()
+    name = choose_entry(history, "Delete from Clipboard History",
+                        "edit-delete", args)
+    if name is not None:
+        with history.lock():
+            history.delete(name)
+    return 0
+
+
+def cmd_clear(args):
+    answer = choose([CLEAR_ROW], "Clear Clipboard History", "edit-clear",
+                    args)
+    if answer == CLEAR_ROW:
+        history = History()
+        with history.lock():
+            history.clear()
+    return 0
+
+
+def cmd_copy(_args):
+    data = sys.stdin.buffer.read()
+    if not data:
+        return 0
+    history = History()
+    with history.lock():
+        history.add("txt", data, session_size())
+    put_on_clipboard("txt", data)
+    return 0
+
+
+COMMANDS = {
+    "daemon": cmd_daemon,
+    "event": cmd_event,
+    "pick": cmd_pick,
+    "delete": cmd_delete,
+    "clear": cmd_clear,
+    "copy": cmd_copy,
+}
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] not in COMMANDS:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return COMMANDS[argv[1]](argv[2:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
