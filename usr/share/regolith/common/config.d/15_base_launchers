@@ -4,7 +4,10 @@
 
 ## Launch // Terminal // <> Enter ##
 set_from_resource $wm.binding.terminal wm.binding.terminal Return
-set_from_resource $wm.program.terminal wm.program.terminal /usr/bin/xdg-terminal-exec
+# xdg-terminal-exec opens a new window of the default terminal (Ptyxis, the
+# x-terminal-emulator on Ubuntu 26.04, only raises its open window when run
+# again). Debian bookworm and Ubuntu jammy have no xdg-terminal-exec.
+set_from_resource $wm.program.terminal wm.program.terminal $(command -v xdg-terminal-exec || echo x-terminal-emulator)
 bindsym $mod+$wm.binding.terminal exec --no-startup-id systemd-run --user --scope $wm.program.terminal
 
 ## Launch // Browser // <><Shift> Enter ##
