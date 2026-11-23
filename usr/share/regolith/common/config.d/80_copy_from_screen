@@ -1,0 +1,23 @@
+###############################################################################
+# Copy from the screen: the text, the QR code content or the colour found on
+# the screen goes to the clipboard, with a notification. The text and QR keys
+# take an area dragged out with slurp (sway) or slop (i3); the colour key takes
+# the point clicked. regolith-copy-from-screen does the work in both sessions.
+#
+# wm.ocr.languages lists the text recognition languages the way tesseract
+# writes them, for example deu or deu+eng.
+###############################################################################
+
+set_from_resource $wm.ocr.languages wm.ocr.languages eng
+
+## Session // Copy Text from Screen Area // <><Alt> o ##
+set_from_resource $wm.binding.copy_text wm.binding.copy_text o
+bindsym $mod+$alt+$wm.binding.copy_text exec --no-startup-id regolith-copy-from-screen text $wm.ocr.languages
+
+## Session // Copy QR Code from Screen Area // <><Alt> b ##
+set_from_resource $wm.binding.copy_qr wm.binding.copy_qr b
+bindsym $mod+$alt+$wm.binding.copy_qr exec --no-startup-id regolith-copy-from-screen qr
+
+## Session // Copy Colour from Screen Point // <><Alt> c ##
+set_from_resource $wm.binding.copy_color wm.binding.copy_color c
+bindsym $mod+$alt+$wm.binding.copy_color exec --no-startup-id regolith-copy-from-screen color
