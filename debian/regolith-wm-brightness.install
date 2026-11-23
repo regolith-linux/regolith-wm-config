@@ -1,0 +1,3 @@
+usr/share/regolith/i3/config.d/65_brightness_keybindings
+scripts/regolith-brightness usr/bin
+scripts/regolith-brightnessd usr/bin

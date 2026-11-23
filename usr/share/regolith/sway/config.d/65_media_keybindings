@@ -25,10 +25,16 @@ bindsym --locked Ctrl+Alt+XF86AudioRaiseVolume exec regolith-sway-volumectl -u +
 bindsym --locked Ctrl+Alt+XF86AudioLowerVolume exec regolith-sway-volumectl -u - $wm.media.volume.step
 bindsym --locked Alt+XF86AudioMute exec regolith-sway-volumectl %
 
-# Brightness Controls
+# Brightness Controls: regolith-brightness steps the built-in panel and every
+# external screen (over DDC/CI) and shows the level with avizo. Screens whose
+# model name or serial number is in wm.media.brightness.ddc.exclude
+# (comma-separated) are left alone. The service started here
+# (regolith-brightnessd) drives the displays; the keys hand it their presses.
 set_from_resource $wm.media.brightness.step wm.media.brightness.step 5
-bindsym --locked XF86MonBrightnessUp exec lightctl + $wm.media.brightness.step
-bindsym --locked XF86MonBrightnessDown exec lightctl - $wm.media.brightness.step
+set_from_resource $wm.media.brightness.ddc.exclude wm.media.brightness.ddc.exclude ""
+exec regolith-brightnessd --step $wm.media.brightness.step --exclude "$wm.media.brightness.ddc.exclude"
+bindsym --locked XF86MonBrightnessUp exec regolith-brightness up
+bindsym --locked XF86MonBrightnessDown exec regolith-brightness down
 
 # Eject, battery and airplane mode keys, handled by gnome-settings-daemon in
 # the X11 session: eject a removable drive (on the lock screen too), show the
