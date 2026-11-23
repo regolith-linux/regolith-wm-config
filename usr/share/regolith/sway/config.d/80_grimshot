@@ -6,6 +6,10 @@
 # is Alt+Print: the Alt+Print binding below then replaces it, so Alt+Print saves
 # the focused window as in i3, and --no-warn keeps sway from showing its config
 # error bar for the replaced binding.
+#
+# The selection key freezes the screen and lets you pick a window from the
+# keyboard, a window or an area with the pointer, or a whole monitor, then saves
+# and copies the picture (regolith-frozen-screenshot, the same picker as in i3).
 
 ## Session // Window Snapshot // <><Prtscr> ##
 set_from_resource $wm.binding.screenshot.window wm.binding.screenshot.window Print
@@ -13,7 +17,7 @@ bindsym $mod+$wm.binding.screenshot.window exec grimshot copy active
 
 ## Session // Screenshot Selection // <><Shift><Prtscr> ##
 set_from_resource $wm.binding.screenshot wm.binding.screenshot Shift+Print
-bindsym $mod+$wm.binding.screenshot exec grimshot --notify savecopy anything
+bindsym $mod+$wm.binding.screenshot exec /usr/lib/regolith/sway/regolith-frozen-screenshot
 
 ## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
 set_from_resource $wm.binding.screenshot.all wm.binding.screenshot.all Shift+Ctrl+Print

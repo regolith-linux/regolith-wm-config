@@ -1,6 +1,8 @@
 # Screenshot keys of the sway session (80_grimshot) that gnome-flashback's
-# Print keys don't cover: copy the focused window, save and copy a window or an
-# area, and save all screens. They use the same resources as in sway.
+# Print keys don't cover: copy the focused window, save and copy a window, an
+# area or a monitor, and save all screens. They use the same resources as in
+# sway. The selection key freezes the screen first, as in sway, through the
+# same picker (regolith-frozen-screenshot).
 
 ## Session // Window Snapshot // <><Prtscr> ##
 set_from_resource $wm.binding.screenshot.window wm.binding.screenshot.window Print
@@ -8,7 +10,7 @@ bindsym $mod+$wm.binding.screenshot.window exec --no-startup-id regolith-i3-scre
 
 ## Session // Screenshot Selection // <><Shift><Prtscr> ##
 set_from_resource $wm.binding.screenshot wm.binding.screenshot Shift+Print
-bindsym $mod+$wm.binding.screenshot exec --no-startup-id regolith-i3-screenshot --notify savecopy anything
+bindsym $mod+$wm.binding.screenshot exec --no-startup-id /usr/lib/regolith/i3/regolith-frozen-screenshot
 
 ## Session // Capture All Screens // <><Shift><Ctrl><Prtscr> ##
 set_from_resource $wm.binding.screenshot.all wm.binding.screenshot.all Shift+Ctrl+Print

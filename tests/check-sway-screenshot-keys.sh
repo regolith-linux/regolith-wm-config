@@ -86,13 +86,13 @@ x11=(
 
 check_mod Mod4 "${x11[@]}" \
     Mod4+Print "exec grimshot copy active" \
-    Mod4+Shift+Print "exec grimshot --notify savecopy anything" \
+    Mod4+Shift+Print "exec /usr/lib/regolith/sway/regolith-frozen-screenshot" \
     Control+Mod4+Shift+Print "exec grimshot --notify save screen"
 
 # With Alt as $mod, $mod+Print is Alt+Print: the X11-session key wins, as in
 # i3; the other two sway-only keys keep working
 check_mod Mod1 "${x11[@]}" \
-    Mod1+Shift+Print "exec grimshot --notify savecopy anything" \
+    Mod1+Shift+Print "exec /usr/lib/regolith/sway/regolith-frozen-screenshot" \
     Control+Mod1+Shift+Print "exec grimshot --notify save screen"
 
 exit "$status"

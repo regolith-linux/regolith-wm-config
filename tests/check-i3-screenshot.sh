@@ -129,11 +129,13 @@ else
     diff <(bindings "$SWAY_PARTIAL") <(bindings "$I3_PARTIAL") >&2 || true
     status=1
 fi
-# Each i3 key runs the helper with the arguments sway gives grimshot
+# Each i3 key runs the helper with the arguments sway gives grimshot, and the
+# selection key runs each session's copy of the frozen-screen picker
 cmds() {
     awk '$1 == "bindsym" && $2 ~ /^\$mod\+/ {
         c = ""; for (i = 3; i <= NF; i++) c = c " " $i
-        sub(/^ exec (--no-startup-id )?/, "", c); sub(/^(grimshot|regolith-i3-screenshot) /, "", c); print c }' "$1"
+        sub(/^ exec (--no-startup-id )?/, "", c); sub(/^(grimshot|regolith-i3-screenshot) /, "", c)
+        sub(/^\/usr\/lib\/regolith\/(i3|sway)\//, "", c); print c }' "$1"
 }
 if [ "$(cmds "$I3_PARTIAL")" = "$(cmds "$SWAY_PARTIAL")" ]; then
     echo "ok   i3 keys take the same actions as grimshot's"
