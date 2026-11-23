@@ -1,0 +1,31 @@
+###############################################################################
+# Sound devices and media players: switch the output, the input and the player
+###############################################################################
+# Each press steps to the next sound output, sound input or media player and
+# names it in a notification (regolith-media-switch). The player keys act on
+# the player chosen here, or on the one used last: they go through playerctl
+# and playerctld, in the sway session (65_media_keybindings) as in the X11
+# session (i3/config.d/65_media_keybindings), and the tracker started below
+# keeps playerctld's active player on that player.
+
+## Modify // Switch Audio Output // <><Ctrl> o ##
+set_from_resource $wm.binding.audio_output wm.binding.audio_output Ctrl+o
+bindsym $mod+$wm.binding.audio_output exec --no-startup-id regolith-media-switch output
+
+## Modify // Switch Audio Input // <><Ctrl><Shift> o ##
+set_from_resource $wm.binding.audio_input wm.binding.audio_input Ctrl+Shift+o
+bindsym $mod+$wm.binding.audio_input exec --no-startup-id regolith-media-switch input
+
+## Modify // Switch Media Player // <><Ctrl> p ##
+set_from_resource $wm.binding.media_player wm.binding.media_player Ctrl+p
+bindsym $mod+$wm.binding.media_player exec --no-startup-id regolith-media-switch player
+
+# The same with Shift and the media keys. With Shift, the Play key sends
+# XF86AudioPause: the explicit binding keeps it from pausing the player.
+bindsym Shift+XF86AudioMute exec --no-startup-id regolith-media-switch output
+bindsym Shift+XF86AudioMicMute exec --no-startup-id regolith-media-switch input
+bindsym Shift+XF86AudioPlay exec --no-startup-id regolith-media-switch player
+bindsym Shift+XF86AudioPause exec --no-startup-id regolith-media-switch player
+
+# Keep track of the player in charge
+exec --no-startup-id regolith-media-switch track
