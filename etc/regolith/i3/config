@@ -147,17 +147,12 @@ set_from_resource $wm.binding.move_down wm.binding.move_down Shift+j
 # WM Config Partials
 ###############################################################################
 
-# Include common partials
-include /usr/share/regolith/common/config.d/*
-
-# Include any regolith i3 partials
-include /usr/share/regolith/i3/config.d/*
-
-# Include any partials common between i3 and sway sessions
-include $HOME/.config/regolith3/common-wm/config.d/*
-
-# Include any user i3 partials
-include $HOME/.config/regolith3/i3/config.d/*
+# Include the partials in force, gathered at every load from the common and
+# i3 partials in /usr/share/regolith/{common,i3}/config.d and the user's in
+# ~/.config/regolith3/{common-wm,i3}/config.d. A user partial with the name of
+# a shipped one replaces it, or switches it off when empty or a link to
+# /dev/null; other user partials follow the shipped ones.
+include $(/usr/bin/regolith-wm-partials i3)
 
 # Start the systemd target manually is the session is not started by systemd
 # Notify systemd about successful session start otherwise

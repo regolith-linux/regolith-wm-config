@@ -1,0 +1,290 @@
+#!/usr/bin/python3 -s
+"""Gather the window manager partials in force for one Regolith session.
+
+  regolith-wm-partials i3|sway
+
+The root configurations call this from an include line,
+`include $(/usr/bin/regolith-wm-partials i3)`, so it runs whenever the
+window manager reads its configuration: at start, on reload, on i3 restart
+and in check mode.
+
+The partials come from four folders, read in this order:
+
+  /usr/share/regolith/common/config.d          shipped, both sessions
+  /usr/share/regolith/<wm>/config.d            shipped, this session
+  ~/.config/regolith3/common-wm/config.d       user, both sessions
+  ~/.config/regolith3/<wm>/config.d            user, this session
+
+A user partial replaces every shipped partial of exactly the same file name,
+in the slot of the first of them. An empty user file, or a link to
+/dev/null, switches the shipped partial off. When both user folders have a
+partial of the same name, the session folder's one is used and the common
+one is not read. User partials whose name no shipped partial has follow the
+shipped ones, the common folder's first.
+
+In the user folders a partial is a readable, non-empty regular file or a
+link (chain) to one. Anything else is passed over as if it were not there:
+links to empty files, dangling or looping links, folders, unreadable files,
+pipes, sockets and devices. Shipped folders load readable regular files and
+links to them. Names starting with a dot or both starting and ending with
+#, and backup, editor and package-manager remnants, are skipped in all four
+folders.
+
+The partials in force are written one after the other, each under a comment
+naming its source, to a single file in $XDG_RUNTIME_DIR/regolith3/wm-partials
+(or ~/.cache/regolith3/wm-partials without a runtime folder). The file is
+replaced atomically and its path is printed for the include line, so every
+load reads one consistent state and repeated loads reuse the same file. With
+nowhere to write, the shipped partials are printed instead, in the order the
+root configurations included them before.
+
+The include line splits the printed text on blanks and doesn't expand
+patterns in it. So a folder whose path has a blank in it is not used for the
+output file, and in the fallback a shipped partial with a blank in its name
+cannot be listed.
+"""
+
+import os
+import stat
+import sys
+import tempfile
+
+SESSIONS = ("i3", "sway")
+SHIPPED_ROOT = b"/usr/share/regolith"
+USER_ROOT = b".config/regolith3"
+# Where the partials in force are written: (environment variable, folder)
+OUTPUTS = ((b"XDG_RUNTIME_DIR", b"regolith3/wm-partials"),
+           (b"HOME", b".cache/regolith3/wm-partials"))
+
+# Remnants of ucf, dpkg, patch and editors: never loaded, never replace anything.
+IGNORED_SUFFIXES = (
+    b".ucf-dist", b".ucf-new", b".ucf-old",
+    b".dpkg-tmp", b".dpkg-dist", b".dpkg-new", b".dpkg-old",
+    b".tmp", b".rej", b".orig", b".bak",
+    b".swo", b".swp", b"~",
+)
+
+# How a user entry counts
+FRAGMENT, SWITCH_OFF = "fragment", "switch-off"
+
+# The include line's expansion splits the command's output on these
+BLANKS = b" \t\n"
+
+
+def warn(message):
+    print("regolith-wm-partials: " + message, file=sys.stderr)
+
+
+def ignored_name(name):
+    """Names that are never read, in shipped and user folders alike."""
+    return (name.startswith(b".")
+            or (len(name) > 1 and name.startswith(b"#") and name.endswith(b"#"))
+            or name.endswith(IGNORED_SUFFIXES))
+
+
+def list_names(directory):
+    """Names in a folder in byte order; a missing folder has none."""
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    return sorted(name for name in names if not ignored_name(name))
+
+
+def read_regular(path, flags=0):
+    """Contents of the regular file at path, or None if it is anything else."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def user_entry(path):
+    """(FRAGMENT, contents), (SWITCH_OFF, None) or None for a user entry."""
+    contents = read_regular(path, os.O_NOFOLLOW)
+    if contents is not None:
+        return (FRAGMENT, contents) if contents else (SWITCH_OFF, None)
+    try:
+        if not stat.S_ISLNK(os.lstat(path).st_mode):
+            return None
+        target = os.path.realpath(path, strict=True)
+    except (OSError, RuntimeError):
+        return None  # vanished, dangling or looping
+    if target == b"/dev/null":
+        return (SWITCH_OFF, None)
+    contents = read_regular(target)
+    # Only links ending at /dev/null switch off; a link to an empty file is nothing.
+    return (FRAGMENT, contents) if contents else None
+
+
+def effective_partials(shipped_dirs, user_dirs):
+    """The partials in force as a list of (source path, contents).
+
+    shipped_dirs and user_dirs are (common folder, session folder) pairs,
+    as bytes; a user folder may be None.
+    """
+    shipped = []
+    for directory in shipped_dirs:
+        for name in list_names(directory):
+            path = os.path.join(directory, name)
+            contents = read_regular(path)
+            if contents is not None:
+                shipped.append((name, path, contents))
+
+    # The user entry in force for each name: the session folder's, unless
+    # it is passed over, then the common folder's.
+    user = [{}, {}]
+    for layer, directory in enumerate(user_dirs):
+        if directory is None:
+            continue
+        for name in list_names(directory):
+            path = os.path.join(directory, name)
+            entry = user_entry(path)
+            if entry is not None:
+                user[layer][name] = (path, entry)
+    winners = dict(user[0])
+    winners.update(user[1])
+
+    partials = []
+    replaced = set()
+    shipped_names = set()
+    for name, path, contents in shipped:
+        shipped_names.add(name)
+        if name not in winners:
+            partials.append((path, contents))
+        elif name not in replaced:
+            replaced.add(name)
+            user_path, (kind, user_contents) = winners[name]
+            if kind == FRAGMENT:
+                partials.append((user_path, user_contents))
+    for layer in user:
+        for name in sorted(layer):
+            path, (kind, contents) = layer[name]
+            if (name not in shipped_names and winners[name][0] == path
+                    and kind == FRAGMENT):
+                partials.append((path, contents))
+    return partials
+
+
+def shipped_paths(shipped_dirs):
+    """The shipped partials, as the root configurations included them before."""
+    return [os.path.join(directory, name)
+            for directory in shipped_dirs
+            for name in list_names(directory)
+            if os.path.isfile(os.path.join(directory, name))
+            and os.access(os.path.join(directory, name), os.R_OK)]
+
+
+def render(partials):
+    """The partials one after the other, each under a comment naming its source."""
+    out = []
+    for path, contents in partials:
+        source = path.replace(b"\\", b"\\\\").replace(b"\n", b"\\n").replace(b"\r", b"\\r")
+        out.append(b"# " + source + b"\n")
+        out.append(contents)
+        if not contents.endswith(b"\n"):
+            out.append(b"\n")
+    return b"".join(out)
+
+
+def private_dir(base, sub):
+    """base/sub, created owner-only, or None if unusable. base must exist."""
+    if not base or not os.path.isabs(base) or not os.path.isdir(base):
+        return None
+    directory = os.path.join(base, sub)
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        st = os.lstat(directory)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+            return None
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            os.chmod(directory, 0o700)
+    except OSError:
+        return None
+    return directory
+
+
+def write_atomically(directory, name, data):
+    fd, tmp = tempfile.mkstemp(prefix=b"." + name + b".", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, os.path.join(directory, name))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return os.path.join(directory, name)
+
+
+def one_word(path):
+    """True if path comes through the include line's expansion as one word."""
+    return not any(c in BLANKS for c in path)
+
+
+def write_partials(wm, shipped_dirs, user_dirs):
+    """Write the partials in force and return the file's path, or None."""
+    data = render(effective_partials(shipped_dirs, user_dirs))
+    for variable, sub in OUTPUTS:
+        directory = private_dir(os.environb.get(variable, b""), sub)
+        if directory is None or not one_word(directory):
+            continue
+        try:
+            return write_atomically(directory, wm, data)
+        except OSError as error:
+            warn(f"{os.fsdecode(directory)}: {error.strerror}")
+    return None
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in SESSIONS:
+        print("usage: regolith-wm-partials i3|sway", file=sys.stderr)
+        return 2
+    wm = os.fsencode(argv[1])
+    os.umask(0o077)
+    shipped_dirs = [os.path.join(SHIPPED_ROOT, layer, b"config.d") for layer in (b"common", wm)]
+    home = os.environb.get(b"HOME", b"")
+    if home and os.path.isabs(home):
+        user_dirs = [os.path.join(home, USER_ROOT, layer, b"config.d")
+                     for layer in (b"common-wm", wm)]
+    else:
+        user_dirs = [None, None]
+
+    # The include line gets nothing if this fails, and the session would start
+    # without any partial: fall back to the shipped ones on any error.
+    try:
+        path = write_partials(wm, shipped_dirs, user_dirs)
+    except Exception as error:
+        warn(f"{error}")
+        path = None
+    if path is not None:
+        sys.stdout.buffer.write(path + b"\n")
+        return 0
+    warn("nowhere to write the partials, loading the shipped ones")
+    words = []
+    for path in shipped_paths(shipped_dirs):
+        if one_word(path):
+            words.append(path)
+        else:
+            warn(f"cannot load {os.fsdecode(path)!r}")
+    sys.stdout.buffer.write(b" ".join(words) + b"\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
