@@ -1,0 +1,2 @@
+usr/share/regolith/common/config.d/66_display_keys
+scripts/regolith-display-key usr/bin
