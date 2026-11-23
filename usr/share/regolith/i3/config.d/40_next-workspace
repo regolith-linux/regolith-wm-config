@@ -1,11 +1,29 @@
 ## Navigate // Next Free Workspace // <> ` ##
 set_from_resource $wm.binding.next_free wm.binding.next_free grave
-bindsym $mod+$wm.binding.next_free exec --no-startup-id /usr/bin/i3-next-workspace
+bindsym $mod+$wm.binding.next_free exec --no-startup-id childe
 
 ## Modify // Move Window to Next Free Workspace // <><Shift> ` ##
 set_from_resource $wm.binding.move_next_free wm.binding.move_next_free Shift+grave
-bindsym $mod+$wm.binding.move_next_free exec --no-startup-id /usr/bin/i3-next-workspace --move-window
+bindsym $mod+$wm.binding.move_next_free exec --no-startup-id childe --move-window
 
 ## Modify // Carry Window to Next Free Workspace // <><Alt> ` ##
 set_from_resource $wm.binding.take_next_free wm.binding.take_next_free grave
-bindsym $mod+$alt+$wm.binding.take_next_free exec --no-startup-id /usr/bin/i3-next-workspace --move-window-and-follow
+bindsym $mod+$alt+$wm.binding.take_next_free exec --no-startup-id childe --move-window --follow
+
+# Workspace names that show the apps on each workspace, off by default. With
+#   wm.workspace.app_names: yes
+# the session starts `childe --workspace-names`. It labels each window with
+# the resource wm.workspace.icon.<id>, where <id> is the window's lowercased
+# Wayland app_id or X11 WM_CLASS class, or with <id> itself when that resource
+# is unset, and adds the labels to the workspace's name. Labels may be text or
+# icon glyphs. With
+#   wm.workspace.icon.firefox: web
+#   wm.workspace.icon.foot: term
+# workspace 2 holding Firefox and foot is named "2: web term", and the bar
+# shows "web term" when it strips workspace numbers (the default).
+# The daemon starts with the session (exec, not exec_always), so a reload
+# never starts a second one; childe also exits if one is already running.
+# Changed labels apply on reload; turning the option on or off applies at the
+# next login.
+set_from_resource $wm.workspace.app_names wm.workspace.app_names no
+exec --no-startup-id [ "$wm.workspace.app_names" = yes ] && exec childe --workspace-names
