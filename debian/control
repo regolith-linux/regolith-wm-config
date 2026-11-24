@@ -335,7 +335,8 @@ Package: regolith-wm-base-launchers
 Architecture: any
 Depends: ${misc:Depends},
   libgtk-3-bin,
-  regolith-wm-config
+  regolith-wm-config,
+  xdg-terminal-exec | x-terminal-emulator
 Description: Terminal and Browser launcher config
  Adds keybindings for terminal and browser.
 
