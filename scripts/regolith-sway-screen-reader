@@ -1,0 +1,231 @@
+#!/usr/bin/python3
+"""Turn Regolith's sway key bindings for the Orca screen reader on and off.
+
+Started once per sway session by /usr/share/regolith/sway/config.d/45_screen_reader.
+The bindings in /usr/share/regolith/sway/screen-reader/orca.conf are applied over
+sway IPC while both of these hold:
+  - the screen reader is on (GSettings org.gnome.desktop.a11y.applications
+    screen-reader-enabled, the switch in Settings > Accessibility);
+  - Orca's remote controller is on the session bus (org.gnome.Orca.Service in
+    Orca 49 and 50, org.gnome.Orca1.Service from Orca 51).
+When either stops, the bindings are removed again, so Insert and the keypad keys
+reach applications exactly as without this package. A sway reload drops bindings
+added over IPC, so they are applied again after each reload. Entering and leaving
+the browse-keys mode is announced through Orca.
+
+Environment, for tests: REGOLITH_SCREEN_READER_BINDINGS overrides the bindings
+file. The helper exits when sway goes away.
+"""
+import fcntl
+import json
+import os
+import re
+import socket
+import struct
+import sys
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+BINDINGS = os.environ.get("REGOLITH_SCREEN_READER_BINDINGS",
+                          "/usr/share/regolith/sway/screen-reader/orca.conf")
+SCHEMA = "org.gnome.desktop.a11y.applications"
+KEY = "screen-reader-enabled"
+ORCA_NAMES = ("org.gnome.Orca1.Service", "org.gnome.Orca.Service")
+ORCA_MODES = ("orca-browse", "orca-prompt")
+IPC_MAGIC = b"i3-ipc"
+RUN_COMMAND, SUBSCRIBE, GET_BINDING_STATE = 0, 2, 12
+EVENT_MODE, EVENT_WORKSPACE = 0x80000002, 0x80000000
+
+
+def log(msg):
+    sys.stderr.write(f"regolith-sway-screen-reader: {msg}\n")
+    sys.stderr.flush()
+
+
+def load_bindings(path):
+    """Return [(enable command, disable command)] for each binding in a sway partial."""
+    out, mode = [], None
+    with open(path, encoding="utf-8") as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.fullmatch(r'mode\s+"?([\w.-]+)"?\s*\{', line)
+            if m and mode is None:
+                mode = m.group(1)
+                continue
+            if line == "}" and mode is not None:
+                mode = None
+                continue
+            words = line.split()
+            if words[0] not in ("bindsym", "bindcode"):
+                raise ValueError(f"{path}:{n}: only bindings and mode blocks are allowed")
+            i = 1
+            while i < len(words) and words[i].startswith("--"):
+                i += 1
+            if i + 1 >= len(words):
+                raise ValueError(f"{path}:{n}: binding without a command")
+            prefix = f"mode {mode} " if mode else ""
+            unbind = " ".join(["un" + words[0]] + words[1:i + 1])
+            out.append((prefix + line, prefix + unbind))
+    return out
+
+
+class Sway:
+    def __init__(self, path):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(path)
+
+    def _recv(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise EOFError("sway closed the IPC socket")
+            buf += chunk
+        return buf
+
+    def send(self, kind, payload=""):
+        data = payload.encode()
+        self.sock.sendall(IPC_MAGIC + struct.pack("=II", len(data), kind) + data)
+
+    def recv(self):
+        header = self._recv(14)
+        if header[:6] != IPC_MAGIC:
+            raise EOFError("not an i3/sway IPC reply")
+        length, kind = struct.unpack("=II", header[6:])
+        return kind, json.loads(self._recv(length) or b"null")
+
+    def request(self, kind, payload=""):
+        self.send(kind, payload)
+        return self.recv()[1]
+
+
+class Gate:
+    def __init__(self, swaysock, settings, loop):
+        self.bindings = load_bindings(BINDINGS)
+        self.cmd = Sway(swaysock)
+        self.events = Sway(swaysock)
+        self.loop = loop
+        self.settings = settings
+        self.orca = {}  # bus name -> owner
+        self.active = False
+        self.mode = "default"
+
+        reply = self.events.request(SUBSCRIBE, json.dumps(["workspace", "mode"]))
+        if not reply or not reply.get("success"):
+            raise RuntimeError(f"sway refused the event subscription: {reply}")
+        GLib.io_add_watch(self.events.sock.fileno(), GLib.PRIORITY_DEFAULT,
+                          GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+                          self.on_event)
+        settings.connect(f"changed::{KEY}", lambda *_: self.update("setting changed"))
+        for name in ORCA_NAMES:
+            Gio.bus_watch_name(Gio.BusType.SESSION, name, Gio.BusNameWatcherFlags.NONE,
+                               self.on_appeared, self.on_vanished)
+        self.update("start")
+
+    def wanted(self):
+        return self.settings.get_boolean(KEY) and bool(self.orca)
+
+    def run(self, commands):
+        failed = 0
+        for command in commands:
+            reply = self.cmd.request(RUN_COMMAND, command)
+            if not reply or not all(r.get("success") for r in reply):
+                failed += 1
+                if failed <= 3:
+                    log(f"sway rejected [{command}]: {reply}")
+        return failed
+
+    def apply(self, why):
+        failed = self.run(on for on, _ in self.bindings)
+        log(f"bindings on ({why}; {len(self.bindings) - failed} of {len(self.bindings)} applied)")
+
+    def remove(self, why):
+        current = self.cmd.request(GET_BINDING_STATE) or {}
+        if current.get("name") in ORCA_MODES:
+            self.run(["mode default"])
+        self.run(off for _, off in self.bindings)
+        log(f"bindings off ({why})")
+
+    def update(self, why):
+        wanted = self.wanted()
+        if wanted and not self.active:
+            self.apply(why)
+        elif self.active and not wanted:
+            self.remove(why)
+        self.active = wanted
+
+    def on_appeared(self, _conn, name, owner):
+        self.orca[name] = owner
+        self.update(f"{name} appeared")
+
+    def on_vanished(self, _conn, name):
+        if self.orca.pop(name, None) is not None:
+            self.update(f"{name} vanished")
+
+    def say(self, text):
+        name = next((n for n in ORCA_NAMES if n in self.orca), None)
+        if not name:
+            return
+        path = "/" + name.rsplit(".", 1)[0].replace(".", "/") + "/Service"
+        Gio.bus_get_sync(Gio.BusType.SESSION, None).call(
+            name, path, name, "PresentMessage", GLib.Variant("(s)", (text,)),
+            None, Gio.DBusCallFlags.NONE, 2000, None, None)
+
+    def on_event(self, _fd, condition):
+        if condition & (GLib.IOCondition.HUP | GLib.IOCondition.ERR):
+            self.loop.quit()
+            return False
+        try:
+            kind, payload = self.events.recv()
+        except (EOFError, OSError, ValueError):
+            self.loop.quit()
+            return False
+        change = (payload or {}).get("change")
+        if kind == EVENT_WORKSPACE and change == "reload":
+            self.mode = "default"
+            if self.active:
+                self.apply("sway reloaded")
+        elif kind == EVENT_MODE:
+            if change == "orca-browse" and self.mode != "orca-browse":
+                self.say("Browse keys on")
+            elif self.mode == "orca-browse" and change != "orca-browse":
+                self.say("Browse keys off")
+            self.mode = change
+        return True
+
+
+def main():
+    swaysock = os.environ.get("SWAYSOCK")
+    if not swaysock:
+        return 0
+    source = Gio.SettingsSchemaSource.get_default()
+    if source is None or source.lookup(SCHEMA, True) is None:
+        return 0  # no GNOME a11y settings: nothing can turn the screen reader on
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or GLib.get_user_runtime_dir()
+    lock_path = os.path.join(runtime, f"regolith-sway-screen-reader.{os.path.basename(swaysock)}.lock")
+    lock = open(lock_path, "w", encoding="utf-8")  # noqa: SIM115  (held for the process lifetime)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0  # already running for this sway
+    loop = GLib.MainLoop()
+    try:
+        gate = Gate(swaysock, Gio.Settings.new(SCHEMA), loop)
+    except (OSError, EOFError, ValueError, RuntimeError) as err:
+        log(str(err))
+        return 1
+    try:
+        loop.run()
+    except KeyboardInterrupt:
+        pass
+    del gate
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

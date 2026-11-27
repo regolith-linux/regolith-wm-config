@@ -1,0 +1,1019 @@
+{
+ "desktop": {
+  "1": {
+   "command": "next_heading_level_1",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel1",
+   "module": "StructuralNavigator"
+  },
+  "2": {
+   "command": "next_heading_level_2",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel2",
+   "module": "StructuralNavigator"
+  },
+  "3": {
+   "command": "next_heading_level_3",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel3",
+   "module": "StructuralNavigator"
+  },
+  "4": {
+   "command": "next_heading_level_4",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel4",
+   "module": "StructuralNavigator"
+  },
+  "5": {
+   "command": "next_heading_level_5",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel5",
+   "module": "StructuralNavigator"
+  },
+  "6": {
+   "command": "next_heading_level_6",
+   "group": "Structural navigation",
+   "method": "NextHeadingLevel6",
+   "module": "StructuralNavigator"
+  },
+  "Alt+BackSpace": {
+   "command": "bypass_mode_toggle",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "Ctrl+End": {
+   "command": "end_of_file",
+   "group": "Caret navigation",
+   "method": "EndOfFile",
+   "module": "CaretNavigator"
+  },
+  "Ctrl+Home": {
+   "command": "start_of_file",
+   "group": "Caret navigation",
+   "method": "StartOfFile",
+   "module": "CaretNavigator"
+  },
+  "Ctrl+Left": {
+   "command": "previous_word",
+   "group": "Caret navigation",
+   "method": "PreviousWord",
+   "module": "CaretNavigator"
+  },
+  "Ctrl+Right": {
+   "command": "next_word",
+   "group": "Caret navigation",
+   "method": "NextWord",
+   "module": "CaretNavigator"
+  },
+  "Down": {
+   "command": "next_line",
+   "group": "Caret navigation",
+   "method": "NextLine",
+   "module": "CaretNavigator"
+  },
+  "End": {
+   "command": "end_of_line",
+   "group": "Caret navigation",
+   "method": "EndOfLine",
+   "module": "CaretNavigator"
+  },
+  "Home": {
+   "command": "start_of_line",
+   "group": "Caret navigation",
+   "method": "StartOfLine",
+   "module": "CaretNavigator"
+  },
+  "KP_Add": {
+   "command": "sayAllHandler",
+   "group": "Default",
+   "method": "SayAll",
+   "module": "SayAllPresenter"
+  },
+  "KP_Add x2": {
+   "command": "flatReviewSayAllHandler",
+   "group": "Flat review",
+   "method": "SayAll",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Begin": {
+   "command": "reviewCurrentItemHandler",
+   "group": "Flat review",
+   "method": "PresentItem",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Begin x2": {
+   "command": "reviewSpellCurrentItemHandler",
+   "group": "Flat review",
+   "method": "SpellItem",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Begin x3": {
+   "command": "reviewPhoneticCurrentItemHandler",
+   "group": "Flat review",
+   "method": "PhoneticItem",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Delete": {
+   "command": "findHandler",
+   "group": "Find",
+   "method": "",
+   "module": ""
+  },
+  "KP_Divide": {
+   "command": "leftClickReviewItemHandler",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "KP_Down": {
+   "command": "reviewCurrentCharacterHandler",
+   "group": "Flat review",
+   "method": "PresentCharacter",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Down x2": {
+   "command": "reviewSpellCurrentCharacterHandler",
+   "group": "Flat review",
+   "method": "SpellCharacter",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Down x3": {
+   "command": "reviewUnicodeCurrentCharacterHandler",
+   "group": "Flat review",
+   "method": "UnicodeCurrentCharacter",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_End": {
+   "command": "reviewPreviousCharacterHandler",
+   "group": "Flat review",
+   "method": "GoPreviousCharacter",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Enter": {
+   "command": "whereAmIBasicHandler",
+   "group": "Object details",
+   "method": "WhereAmIBasic",
+   "module": "WhereAmIPresenter"
+  },
+  "KP_Enter x2": {
+   "command": "whereAmIDetailedHandler",
+   "group": "Object details",
+   "method": "WhereAmIDetailed",
+   "module": "WhereAmIPresenter"
+  },
+  "KP_Home": {
+   "command": "reviewPreviousLineHandler",
+   "group": "Flat review",
+   "method": "GoPreviousLine",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Left": {
+   "command": "reviewPreviousItemHandler",
+   "group": "Flat review",
+   "method": "GoPreviousItem",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Multiply": {
+   "command": "rightClickReviewItemHandler",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "KP_Page_Down": {
+   "command": "reviewNextCharacterHandler",
+   "group": "Flat review",
+   "method": "GoNextCharacter",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Page_Up": {
+   "command": "reviewNextLineHandler",
+   "group": "Flat review",
+   "method": "GoNextLine",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Right": {
+   "command": "reviewNextItemHandler",
+   "group": "Flat review",
+   "method": "GoNextItem",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Subtract": {
+   "command": "toggleFlatReviewModeHandler",
+   "group": "Flat review",
+   "method": "ToggleFlatReviewMode",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Up": {
+   "command": "reviewCurrentLineHandler",
+   "group": "Flat review",
+   "method": "PresentLine",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Up x2": {
+   "command": "reviewSpellCurrentLineHandler",
+   "group": "Flat review",
+   "method": "SpellLine",
+   "module": "FlatReviewPresenter"
+  },
+  "KP_Up x3": {
+   "command": "reviewPhoneticCurrentLineHandler",
+   "group": "Flat review",
+   "method": "PhoneticLine",
+   "module": "FlatReviewPresenter"
+  },
+  "Left": {
+   "command": "previous_character",
+   "group": "Caret navigation",
+   "method": "PreviousCharacter",
+   "module": "CaretNavigator"
+  },
+  "Orca+Ctrl+Down": {
+   "command": "object_navigator_down",
+   "group": "Object navigation",
+   "method": "MoveToFirstChild",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+Left": {
+   "command": "object_navigator_previous",
+   "group": "Object navigation",
+   "method": "MoveToPreviousSibling",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+Return": {
+   "command": "object_navigator_perform_action",
+   "group": "Object navigation",
+   "method": "PerformAction",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+Right": {
+   "command": "object_navigator_next",
+   "group": "Object navigation",
+   "method": "MoveToNextSibling",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+Up": {
+   "command": "object_navigator_up",
+   "group": "Object navigation",
+   "method": "MoveToParent",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+s": {
+   "command": "object_navigator_toggle_simplify",
+   "group": "Object navigation",
+   "method": "ToggleSimplify",
+   "module": "ObjectNavigator"
+  },
+  "Orca+Ctrl+space": {
+   "command": "appPreferencesSettingsHandler",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "Orca+F11": {
+   "command": "toggleTableCellReadModeHandler",
+   "group": "Speech and verbosity",
+   "method": "ToggleTableCellReadingMode",
+   "module": "SpeechPresenter"
+  },
+  "Orca+F12": {
+   "command": "toggle_enabled",
+   "group": "Caret navigation",
+   "method": "ToggleEnabled",
+   "module": "CaretNavigator"
+  },
+  "Orca+KP_Begin": {
+   "command": "reviewCurrentAccessibleHandler",
+   "group": "Flat review",
+   "method": "PresentObject",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+KP_Delete": {
+   "command": "findNextHandler",
+   "group": "Find",
+   "method": "",
+   "module": ""
+  },
+  "Orca+KP_Divide": {
+   "command": "routePointerToItemHandler",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "Orca+KP_End": {
+   "command": "reviewEndOfLineHandler",
+   "group": "Flat review",
+   "method": "GoEndOfLine",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+KP_Enter": {
+   "command": "getTitleHandler",
+   "group": "Object details",
+   "method": "PresentTitle",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+KP_Enter x2": {
+   "command": "getStatusBarHandler",
+   "group": "Object details",
+   "method": "PresentStatusBar",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+KP_Home": {
+   "command": "reviewHomeHandler",
+   "group": "Flat review",
+   "method": "GoHome",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+KP_Left": {
+   "command": "reviewAboveHandler",
+   "group": "Flat review",
+   "method": "GoAbove",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+KP_Page_Up": {
+   "command": "reviewEndHandler",
+   "group": "Flat review",
+   "method": "GoEnd",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+KP_Right": {
+   "command": "reviewBelowHandler",
+   "group": "Flat review",
+   "method": "GoBelow",
+   "module": "FlatReviewPresenter"
+  },
+  "Orca+Shift+Alt+Down": {
+   "command": "table_cell_bottom_of_column",
+   "group": "Table navigation",
+   "method": "MoveToBottomOfColumn",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+Alt+Left": {
+   "command": "table_cell_beginning_of_row",
+   "group": "Table navigation",
+   "method": "MoveToBeginningOfRow",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+Alt+Right": {
+   "command": "table_cell_end_of_row",
+   "group": "Table navigation",
+   "method": "MoveToEndOfRow",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+Alt+Up": {
+   "command": "table_cell_top_of_column",
+   "group": "Table navigation",
+   "method": "MoveToTopOfColumn",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+KP_Delete": {
+   "command": "findPreviousHandler",
+   "group": "Find",
+   "method": "",
+   "module": ""
+  },
+  "Orca+Shift+Up": {
+   "command": "whereAmISelectionHandler",
+   "group": "Object details",
+   "method": "PresentSelection",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+Shift+a": {
+   "command": "show_actions_list",
+   "group": "Actions",
+   "method": "ShowActionsList",
+   "module": "ActionPresenter"
+  },
+  "Orca+Shift+c": {
+   "command": "set_dynamic_row_headers_column",
+   "group": "Table navigation",
+   "method": "SetDynamicRowHeadersColumn",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+c x2": {
+   "command": "clear_dynamic_row_headers_column",
+   "group": "Table navigation",
+   "method": "ClearDynamicRowHeadersColumn",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+d": {
+   "command": "toggle_speech_monitor",
+   "group": "Speech and verbosity",
+   "method": "ToggleMonitor",
+   "module": "SpeechPresenter"
+  },
+  "Orca+Shift+r": {
+   "command": "set_dynamic_column_headers_row",
+   "group": "Table navigation",
+   "method": "SetDynamicColumnHeadersRow",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+r x2": {
+   "command": "clear_dynamic_column_headers_row",
+   "group": "Table navigation",
+   "method": "ClearDynamicColumnHeadersRow",
+   "module": "TableNavigator"
+  },
+  "Orca+Shift+t": {
+   "command": "table_navigator_toggle_enabled",
+   "group": "Table navigation",
+   "method": "ToggleEnabled",
+   "module": "TableNavigator"
+  },
+  "Orca+a": {
+   "command": "toggle_presentation_mode",
+   "group": "Documents",
+   "method": "TogglePresentationMode",
+   "module": "DocumentPresenter"
+  },
+  "Orca+a x2": {
+   "command": "enable_sticky_focus_mode",
+   "group": "Documents",
+   "method": "EnableStickyFocusMode",
+   "module": "DocumentPresenter"
+  },
+  "Orca+a x3": {
+   "command": "enable_sticky_browse_mode",
+   "group": "Documents",
+   "method": "EnableStickyBrowseMode",
+   "module": "DocumentPresenter"
+  },
+  "Orca+backslash": {
+   "command": "toggle_live_region_support",
+   "group": "Live regions",
+   "method": "",
+   "module": ""
+  },
+  "Orca+e": {
+   "command": "present_default_button",
+   "group": "Object details",
+   "method": "PresentDefaultButton",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+equal": {
+   "command": "present_cell_formula",
+   "group": "Object details",
+   "method": "PresentCellFormula",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+f": {
+   "command": "readCharAttributesHandler",
+   "group": "Object details",
+   "method": "PresentCharacterAttributes",
+   "module": "WhereAmIPresenter"
+  },
+  "Orca+h": {
+   "command": "enterLearnModeHandler",
+   "group": "Learn mode",
+   "method": "",
+   "module": ""
+  },
+  "Orca+s": {
+   "command": "toggleSilenceSpeechHandler",
+   "group": "Speech and verbosity",
+   "method": "ToggleSpeech",
+   "module": "SpeechManager"
+  },
+  "Orca+space": {
+   "command": "preferencesSettingsHandler",
+   "group": "Default",
+   "method": "",
+   "module": ""
+  },
+  "Orca+t": {
+   "command": "presentTimeHandler",
+   "group": "System information",
+   "method": "PresentTime",
+   "module": "SystemInformationPresenter"
+  },
+  "Orca+t x2": {
+   "command": "presentDateHandler",
+   "group": "System information",
+   "method": "PresentDate",
+   "module": "SystemInformationPresenter"
+  },
+  "Orca+v": {
+   "command": "toggleSpeechVerbosityHandler",
+   "group": "Speech and verbosity",
+   "method": "ToggleVerbosity",
+   "module": "SpeechPresenter"
+  },
+  "Orca+z": {
+   "command": "structural_navigator_mode_cycle",
+   "group": "Structural navigation",
+   "method": "CycleMode",
+   "module": "StructuralNavigator"
+  },
+  "Right": {
+   "command": "next_character",
+   "group": "Caret navigation",
+   "method": "NextCharacter",
+   "module": "CaretNavigator"
+  },
+  "Shift+1": {
+   "command": "previous_heading_level_1",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel1",
+   "module": "StructuralNavigator"
+  },
+  "Shift+2": {
+   "command": "previous_heading_level_2",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel2",
+   "module": "StructuralNavigator"
+  },
+  "Shift+3": {
+   "command": "previous_heading_level_3",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel3",
+   "module": "StructuralNavigator"
+  },
+  "Shift+4": {
+   "command": "previous_heading_level_4",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel4",
+   "module": "StructuralNavigator"
+  },
+  "Shift+5": {
+   "command": "previous_heading_level_5",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel5",
+   "module": "StructuralNavigator"
+  },
+  "Shift+6": {
+   "command": "previous_heading_level_6",
+   "group": "Structural navigation",
+   "method": "PreviousHeadingLevel6",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+1": {
+   "command": "list_headings_level_1",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel1",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+2": {
+   "command": "list_headings_level_2",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel2",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+3": {
+   "command": "list_headings_level_3",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel3",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+4": {
+   "command": "list_headings_level_4",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel4",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+5": {
+   "command": "list_headings_level_5",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel5",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+6": {
+   "command": "list_headings_level_6",
+   "group": "Structural navigation",
+   "method": "ListHeadingsLevel6",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+Down": {
+   "command": "table_cell_down",
+   "group": "Table navigation",
+   "method": "MoveDown",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+End": {
+   "command": "table_cell_last",
+   "group": "Table navigation",
+   "method": "MoveToLastCell",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+Home": {
+   "command": "table_cell_first",
+   "group": "Table navigation",
+   "method": "MoveToFirstCell",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+Left": {
+   "command": "table_cell_left",
+   "group": "Table navigation",
+   "method": "MoveLeft",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+Right": {
+   "command": "table_cell_right",
+   "group": "Table navigation",
+   "method": "MoveRight",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+Up": {
+   "command": "table_cell_up",
+   "group": "Table navigation",
+   "method": "MoveUp",
+   "module": "TableNavigator"
+  },
+  "Shift+Alt+a": {
+   "command": "list_clickables",
+   "group": "Structural navigation",
+   "method": "ListClickables",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+b": {
+   "command": "list_buttons",
+   "group": "Structural navigation",
+   "method": "ListButtons",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+c": {
+   "command": "list_comboboxes",
+   "group": "Structural navigation",
+   "method": "ListComboboxes",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+e": {
+   "command": "list_entries",
+   "group": "Structural navigation",
+   "method": "ListEntries",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+f": {
+   "command": "list_form_fields",
+   "group": "Structural navigation",
+   "method": "ListFormFields",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+g": {
+   "command": "list_images",
+   "group": "Structural navigation",
+   "method": "ListImages",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+h": {
+   "command": "list_headings",
+   "group": "Structural navigation",
+   "method": "ListHeadings",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+i": {
+   "command": "list_list_items",
+   "group": "Structural navigation",
+   "method": "ListListItems",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+k": {
+   "command": "list_links",
+   "group": "Structural navigation",
+   "method": "ListLinks",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+l": {
+   "command": "list_lists",
+   "group": "Structural navigation",
+   "method": "ListLists",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+m": {
+   "command": "list_landmarks",
+   "group": "Structural navigation",
+   "method": "ListLandmarks",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+o": {
+   "command": "list_large_objects",
+   "group": "Structural navigation",
+   "method": "ListLargeObjects",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+p": {
+   "command": "list_paragraphs",
+   "group": "Structural navigation",
+   "method": "ListParagraphs",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+q": {
+   "command": "list_blockquotes",
+   "group": "Structural navigation",
+   "method": "ListBlockquotes",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+r": {
+   "command": "list_radio_buttons",
+   "group": "Structural navigation",
+   "method": "ListRadioButtons",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+t": {
+   "command": "list_tables",
+   "group": "Structural navigation",
+   "method": "ListTables",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+u": {
+   "command": "list_unvisited_links",
+   "group": "Structural navigation",
+   "method": "ListUnvisitedLinks",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+v": {
+   "command": "list_visited_links",
+   "group": "Structural navigation",
+   "method": "ListVisitedLinks",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Alt+x": {
+   "command": "list_checkboxes",
+   "group": "Structural navigation",
+   "method": "ListCheckboxes",
+   "module": "StructuralNavigator"
+  },
+  "Shift+Ctrl+Alt+q": {
+   "command": "toggle_sleep_mode",
+   "group": "Sleep mode",
+   "method": "ToggleSleepMode",
+   "module": "SleepModeManager"
+  },
+  "Shift+a": {
+   "command": "previous_clickable",
+   "group": "Structural navigation",
+   "method": "PreviousClickable",
+   "module": "StructuralNavigator"
+  },
+  "Shift+b": {
+   "command": "previous_button",
+   "group": "Structural navigation",
+   "method": "PreviousButton",
+   "module": "StructuralNavigator"
+  },
+  "Shift+c": {
+   "command": "previous_combobox",
+   "group": "Structural navigation",
+   "method": "PreviousCombobox",
+   "module": "StructuralNavigator"
+  },
+  "Shift+comma": {
+   "command": "container_start",
+   "group": "Structural navigation",
+   "method": "ContainerStart",
+   "module": "StructuralNavigator"
+  },
+  "Shift+d": {
+   "command": "previous_live_region",
+   "group": "Structural navigation",
+   "method": "PreviousLiveRegion",
+   "module": "StructuralNavigator"
+  },
+  "Shift+e": {
+   "command": "previous_entry",
+   "group": "Structural navigation",
+   "method": "PreviousEntry",
+   "module": "StructuralNavigator"
+  },
+  "Shift+f": {
+   "command": "previous_form_field",
+   "group": "Structural navigation",
+   "method": "PreviousFormField",
+   "module": "StructuralNavigator"
+  },
+  "Shift+g": {
+   "command": "previous_image",
+   "group": "Structural navigation",
+   "method": "PreviousImage",
+   "module": "StructuralNavigator"
+  },
+  "Shift+h": {
+   "command": "previous_heading",
+   "group": "Structural navigation",
+   "method": "PreviousHeading",
+   "module": "StructuralNavigator"
+  },
+  "Shift+i": {
+   "command": "previous_list_item",
+   "group": "Structural navigation",
+   "method": "PreviousListItem",
+   "module": "StructuralNavigator"
+  },
+  "Shift+k": {
+   "command": "previous_link",
+   "group": "Structural navigation",
+   "method": "PreviousLink",
+   "module": "StructuralNavigator"
+  },
+  "Shift+l": {
+   "command": "previous_list",
+   "group": "Structural navigation",
+   "method": "PreviousList",
+   "module": "StructuralNavigator"
+  },
+  "Shift+m": {
+   "command": "previous_landmark",
+   "group": "Structural navigation",
+   "method": "PreviousLandmark",
+   "module": "StructuralNavigator"
+  },
+  "Shift+o": {
+   "command": "previous_large_object",
+   "group": "Structural navigation",
+   "method": "PreviousLargeObject",
+   "module": "StructuralNavigator"
+  },
+  "Shift+p": {
+   "command": "previous_paragraph",
+   "group": "Structural navigation",
+   "method": "PreviousParagraph",
+   "module": "StructuralNavigator"
+  },
+  "Shift+q": {
+   "command": "previous_blockquote",
+   "group": "Structural navigation",
+   "method": "PreviousBlockquote",
+   "module": "StructuralNavigator"
+  },
+  "Shift+r": {
+   "command": "previous_radio_button",
+   "group": "Structural navigation",
+   "method": "PreviousRadioButton",
+   "module": "StructuralNavigator"
+  },
+  "Shift+s": {
+   "command": "previous_separator",
+   "group": "Structural navigation",
+   "method": "PreviousSeparator",
+   "module": "StructuralNavigator"
+  },
+  "Shift+t": {
+   "command": "previous_table",
+   "group": "Structural navigation",
+   "method": "PreviousTable",
+   "module": "StructuralNavigator"
+  },
+  "Shift+u": {
+   "command": "previous_unvisited_link",
+   "group": "Structural navigation",
+   "method": "PreviousUnvisitedLink",
+   "module": "StructuralNavigator"
+  },
+  "Shift+v": {
+   "command": "previous_visited_link",
+   "group": "Structural navigation",
+   "method": "PreviousVisitedLink",
+   "module": "StructuralNavigator"
+  },
+  "Shift+x": {
+   "command": "previous_checkbox",
+   "group": "Structural navigation",
+   "method": "PreviousCheckbox",
+   "module": "StructuralNavigator"
+  },
+  "Up": {
+   "command": "previous_line",
+   "group": "Caret navigation",
+   "method": "PreviousLine",
+   "module": "CaretNavigator"
+  },
+  "a": {
+   "command": "next_clickable",
+   "group": "Structural navigation",
+   "method": "NextClickable",
+   "module": "StructuralNavigator"
+  },
+  "b": {
+   "command": "next_button",
+   "group": "Structural navigation",
+   "method": "NextButton",
+   "module": "StructuralNavigator"
+  },
+  "c": {
+   "command": "next_combobox",
+   "group": "Structural navigation",
+   "method": "NextCombobox",
+   "module": "StructuralNavigator"
+  },
+  "comma": {
+   "command": "container_end",
+   "group": "Structural navigation",
+   "method": "ContainerEnd",
+   "module": "StructuralNavigator"
+  },
+  "d": {
+   "command": "next_live_region",
+   "group": "Structural navigation",
+   "method": "NextLiveRegion",
+   "module": "StructuralNavigator"
+  },
+  "e": {
+   "command": "next_entry",
+   "group": "Structural navigation",
+   "method": "NextEntry",
+   "module": "StructuralNavigator"
+  },
+  "f": {
+   "command": "next_form_field",
+   "group": "Structural navigation",
+   "method": "NextFormField",
+   "module": "StructuralNavigator"
+  },
+  "g": {
+   "command": "next_image",
+   "group": "Structural navigation",
+   "method": "NextImage",
+   "module": "StructuralNavigator"
+  },
+  "h": {
+   "command": "next_heading",
+   "group": "Structural navigation",
+   "method": "NextHeading",
+   "module": "StructuralNavigator"
+  },
+  "i": {
+   "command": "next_list_item",
+   "group": "Structural navigation",
+   "method": "NextListItem",
+   "module": "StructuralNavigator"
+  },
+  "k": {
+   "command": "next_link",
+   "group": "Structural navigation",
+   "method": "NextLink",
+   "module": "StructuralNavigator"
+  },
+  "l": {
+   "command": "next_list",
+   "group": "Structural navigation",
+   "method": "NextList",
+   "module": "StructuralNavigator"
+  },
+  "m": {
+   "command": "next_landmark",
+   "group": "Structural navigation",
+   "method": "NextLandmark",
+   "module": "StructuralNavigator"
+  },
+  "o": {
+   "command": "next_large_object",
+   "group": "Structural navigation",
+   "method": "NextLargeObject",
+   "module": "StructuralNavigator"
+  },
+  "p": {
+   "command": "next_paragraph",
+   "group": "Structural navigation",
+   "method": "NextParagraph",
+   "module": "StructuralNavigator"
+  },
+  "q": {
+   "command": "next_blockquote",
+   "group": "Structural navigation",
+   "method": "NextBlockquote",
+   "module": "StructuralNavigator"
+  },
+  "r": {
+   "command": "next_radio_button",
+   "group": "Structural navigation",
+   "method": "NextRadioButton",
+   "module": "StructuralNavigator"
+  },
+  "s": {
+   "command": "next_separator",
+   "group": "Structural navigation",
+   "method": "NextSeparator",
+   "module": "StructuralNavigator"
+  },
+  "t": {
+   "command": "next_table",
+   "group": "Structural navigation",
+   "method": "NextTable",
+   "module": "StructuralNavigator"
+  },
+  "u": {
+   "command": "next_unvisited_link",
+   "group": "Structural navigation",
+   "method": "NextUnvisitedLink",
+   "module": "StructuralNavigator"
+  },
+  "v": {
+   "command": "next_visited_link",
+   "group": "Structural navigation",
+   "method": "NextVisitedLink",
+   "module": "StructuralNavigator"
+  },
+  "x": {
+   "command": "next_checkbox",
+   "group": "Structural navigation",
+   "method": "NextCheckbox",
+   "module": "StructuralNavigator"
+  },
+  "y": {
+   "command": "last_live_region",
+   "group": "Structural navigation",
+   "method": "",
+   "module": ""
+  }
+ },
+ "orca": "50.3"
+}

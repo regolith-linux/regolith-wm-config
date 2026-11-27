@@ -1,0 +1,318 @@
+#!/usr/bin/python3
+"""regolith-orcactl - run Orca screen reader commands through Orca's remote controller.
+
+  regolith-orcactl key BINDING     run the command Orca binds to BINDING by default
+                                   ("Orca+t", "KP_Up", "Orca+Shift+KP_Up"); the same
+                                   BINDING again within 400 ms runs its double-press
+                                   command (Orca+t twice: the date)
+  regolith-orcactl run MODULE.COMMAND [--silent]
+  regolith-orcactl say TEXT        present TEXT in speech and braille
+  regolith-orcactl prefs           open Orca's preferences
+  regolith-orcactl version
+  regolith-orcactl prompt [--learn]
+        Open a small keyboard-exclusive prompt (GTK 4 layer shell). The next key
+        chord is read as Orca+<chord> and run; Escape cancels. With --learn the
+        prompt stays open and describes each key instead (Orca's learn mode) until
+        Escape.
+
+Talks to org.gnome.Orca.Service (Orca 49 and 50) or org.gnome.Orca1.Service
+(Orca 51 and later) on the session bus. When Orca isn't running, or its version has
+no remote controller, it exits with status 1 and prints nothing. Nothing here reads
+keys outside the prompt's own window. REGOLITH_ORCACTL_DOUBLE_PRESS_MS changes the
+400 ms double-press window.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+KEYMAP = os.environ.get("REGOLITH_ORCACTL_KEYMAP",
+                        "/usr/share/regolith/sway/screen-reader/orca-keymap.json")
+DOUBLE_PRESS_MS = int(os.environ.get("REGOLITH_ORCACTL_DOUBLE_PRESS_MS", "400"))
+LOG = os.environ.get("REGOLITH_ORCACTL_LOG")
+MODIFIER_KEYS = {
+    "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Meta_L", "Meta_R",
+    "Super_L", "Super_R", "Hyper_L", "Hyper_R", "ISO_Level3_Shift", "Caps_Lock", "Num_Lock",
+}
+ORCA_KEYS = {"Insert", "KP_Insert"}
+
+
+class NotRunning(Exception):
+    pass
+
+
+def log(msg):
+    if LOG:
+        with open(LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.3f} regolith-orcactl[{os.getpid()}] {msg}\n")
+
+
+class Orca:
+    """Orca's remote controller, in either of its two D-Bus forms."""
+
+    def __init__(self):
+        from gi.repository import Gio, GLib
+        self.GLib = GLib
+        try:
+            self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except GLib.Error as err:
+            raise NotRunning(str(err)) from err
+        for name in ("org.gnome.Orca1.Service", "org.gnome.Orca.Service"):
+            if self._dbus("NameHasOwner", name):
+                self.name = name
+                self.v1 = name.startswith("org.gnome.Orca1.")
+                self.root = "/org/gnome/Orca1/Service" if self.v1 else "/org/gnome/Orca/Service"
+                return
+        raise NotRunning("Orca's remote controller is not on the session bus")
+
+    def _dbus(self, method, arg):
+        res = self.bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                 "org.freedesktop.DBus", method,
+                                 self.GLib.Variant("(s)", (arg,)), None, 0, 2000, None)
+        return res.unpack()[0]
+
+    def _call(self, path, iface, method, sig=None, params=()):
+        variant = self.GLib.Variant(sig, params) if sig else None
+        res = self.bus.call_sync(self.name, path, iface, method, variant, None, 0, 5000, None)
+        return res.unpack() if res is not None else ()
+
+    def service(self, method, sig=None, params=()):
+        return self._call(self.root, self.name, method, sig, params)
+
+    def command(self, module, command, notify=True):
+        path = f"{self.root}/{module}"
+        if self.v1:
+            res = self._call(path, f"org.gnome.Orca1.{module}", command, "(b)", (notify,))
+        else:
+            res = self._call(path, "org.gnome.Orca.Module", "ExecuteCommand", "(sb)", (command, notify))
+        return bool(res and res[0])
+
+    def descriptions(self, module):
+        """{command: description} for a module; Orca 51 has no descriptions on the bus."""
+        if self.v1:
+            return {}
+        return dict(self._call(f"{self.root}/{module}", "org.gnome.Orca.Module", "ListCommands")[0])
+
+    def say(self, text):
+        self.service("PresentMessage", "(s)", (text,))
+
+
+def load_keymap():
+    with open(KEYMAP, encoding="utf-8") as fh:
+        return json.load(fh)["desktop"]
+
+
+def is_double_press(binding):
+    state = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "regolith-orcactl-last-key")
+    now = time.monotonic()
+    try:
+        with open(state, encoding="utf-8") as fh:
+            last, stamp = fh.read().split("\t")
+        double = last == binding and (now - float(stamp)) * 1000 < DOUBLE_PRESS_MS
+    except (OSError, ValueError):
+        double = False
+    # after a double press, start over, so a third press is a first press again
+    with open(state, "w", encoding="utf-8") as fh:
+        fh.write(f"{binding}\t{-1e9 if double else now}")
+    return double
+
+
+def run_binding(orca, keymap, binding):
+    entry = None
+    if is_double_press(binding):
+        entry = keymap.get(f"{binding} x2")
+    entry = entry or keymap.get(binding)
+    if entry is None:
+        log(f"key {binding}: Orca binds nothing to it")
+        return False
+    if not entry["module"]:
+        log(f"key {binding}: {entry['command']} is not on Orca's remote controller")
+        return False
+    t0 = time.monotonic()
+    ok = orca.command(entry["module"], entry["method"])
+    log(f"key {binding}: {entry['module']}.{entry['method']} -> {ok} in {1000 * (time.monotonic() - t0):.0f} ms")
+    return ok
+
+
+def chord_to_binding(keyval, state, Gdk, orca_held):
+    name = Gdk.keyval_name(Gdk.keyval_to_lower(keyval)) or str(keyval)
+    parts = ["Orca"] if orca_held else []
+    if state & Gdk.ModifierType.SHIFT_MASK and not name.startswith("KP_"):
+        parts.append("Shift")
+    if state & Gdk.ModifierType.CONTROL_MASK:
+        parts.append("Ctrl")
+    if state & Gdk.ModifierType.ALT_MASK:
+        parts.append("Alt")
+    return "+".join(parts + [name])
+
+
+def layer_shell_library():
+    import glob
+    import sysconfig
+    arch = sysconfig.get_config_var("MULTIARCH") or ""
+    for candidate in [f"/usr/lib/{arch}/libgtk4-layer-shell.so.0"] + sorted(glob.glob("/usr/lib/*/libgtk4-layer-shell.so.0")):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def sway_mode(mode):
+    if os.environ.get("SWAYSOCK"):
+        subprocess.run(["swaymsg", "mode", mode], capture_output=True, check=False)
+
+
+def prompt(orca, keymap, learn):
+    # gtk4-layer-shell has to be loaded before libwayland-client
+    lib = layer_shell_library()
+    if lib is None:
+        orca.say("The Orca prompt needs GTK 4 layer shell, which is not installed.")
+        return 1
+    if lib not in os.environ.get("LD_PRELOAD", ""):
+        env = dict(os.environ, LD_PRELOAD=f"{lib} {os.environ.get('LD_PRELOAD', '')}".strip())
+        # keep the prompt out of the accessibility tree, so Orca stays on the application
+        env.setdefault("GTK_A11Y", "none")
+        os.execvpe(sys.executable, [sys.executable, os.path.realpath(__file__)] + sys.argv[1:], env)
+
+    import gi
+    try:
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Gdk", "4.0")
+        gi.require_version("Gtk4LayerShell", "1.0")
+        from gi.repository import Gdk, GLib, Gtk
+        from gi.repository import Gtk4LayerShell as LayerShell
+    except (ImportError, ValueError):
+        orca.say("The Orca prompt needs GTK 4 layer shell, which is not installed.")
+        return 1
+
+    descriptions = {}
+
+    def describe(binding):
+        entry = keymap.get(binding)
+        if entry is None:
+            return "not bound"
+        module = entry["module"]
+        if module and module not in descriptions:
+            try:
+                descriptions[module] = orca.descriptions(module)
+            except GLib.Error:
+                descriptions[module] = {}
+        text = descriptions.get(module, {}).get(entry["method"])
+        if text:
+            return text
+        if not module:
+            return f"{entry['command']}, not available on Wayland"
+        words = "".join(f" {c.lower()}" if c.isupper() else c for c in entry["method"]).strip()
+        return words.capitalize()
+
+    t0 = time.monotonic()
+    result = {"binding": None}
+    held = {"orca": False}
+    app = Gtk.Application(application_id=None)
+
+    def on_activate(app):
+        win = Gtk.ApplicationWindow(application=app, title="Orca learn mode" if learn else "Orca command")
+        LayerShell.init_for_window(win)
+        LayerShell.set_namespace(win, "regolith-orcactl-prompt")
+        LayerShell.set_layer(win, LayerShell.Layer.OVERLAY)
+        LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.EXCLUSIVE)
+        label = Gtk.Label(label="Orca learn mode: press keys, Escape to leave" if learn else "Orca")
+        for side in ("top", "bottom"):
+            getattr(label, f"set_margin_{side}")(12)
+        for side in ("start", "end"):
+            getattr(label, f"set_margin_{side}")(24)
+        win.set_child(label)
+        win.connect("map", lambda _w: log(f"prompt mapped {1000 * (time.monotonic() - t0):.0f} ms after start (learn={learn})"))
+
+        def finish():
+            sway_mode("default")
+            win.set_visible(False)
+            # give the compositor time to hand the keyboard back before Orca acts
+            GLib.timeout_add(120, app.quit)
+
+        def on_key(_ctl, keyval, _keycode, state):
+            name = Gdk.keyval_name(keyval) or ""
+            if name in ORCA_KEYS:
+                held["orca"] = True
+                return True
+            if name in MODIFIER_KEYS:
+                return True
+            if name == "Escape":
+                if learn:
+                    orca.say("Exiting learn mode.")
+                finish()
+                return True
+            # learn mode describes exactly what was pressed (KP_Up, x, Orca+t);
+            # the command prompt reads every chord as Orca+<chord>
+            binding = chord_to_binding(keyval, state, Gdk, held["orca"] or not learn)
+            log(f"prompt key {name} -> {binding}")
+            if learn:
+                orca.say(f"{binding.replace('+', ' ')}. {describe(binding)}")
+                return True
+            result["binding"] = binding
+            finish()
+            return True
+
+        def on_release(_ctl, keyval, _keycode, _state):
+            if (Gdk.keyval_name(keyval) or "") in ORCA_KEYS:
+                held["orca"] = False
+
+        ctl = Gtk.EventControllerKey()
+        ctl.connect("key-pressed", on_key)
+        ctl.connect("key-released", on_release)
+        win.add_controller(ctl)
+        win.present()
+        if learn:
+            orca.say("Learn mode. Press Escape to exit.")
+
+    # An empty sway binding mode while the prompt is open: sway bindings fire even
+    # while a layer surface holds the keyboard exclusively, so without it Orca+t
+    # would run the command instead of reaching the prompt.
+    sway_mode("orca-prompt")
+    try:
+        app.connect("activate", on_activate)
+        app.run(None)
+    finally:
+        sway_mode("default")
+    if result["binding"]:
+        return 0 if run_binding(orca, keymap, result["binding"]) else 1
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        sys.stdout.write(__doc__)
+        return 0 if argv else 2
+    cmd, args = argv[0], argv[1:]
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import GLib
+    try:
+        orca = Orca()
+        if cmd == "key" and len(args) == 1:
+            return 0 if run_binding(orca, load_keymap(), args[0]) else 1
+        if cmd == "run" and args and "." in args[0]:
+            module, command = args[0].split(".", 1)
+            return 0 if orca.command(module, command, "--silent" not in args[1:]) else 1
+        if cmd == "say" and args:
+            orca.say(" ".join(args))
+        elif cmd == "prefs" and not args:
+            orca.service("ShowPreferences")
+        elif cmd == "version" and not args:
+            print(orca.service("GetVersion")[0])
+        elif cmd == "prompt" and args in ([], ["--learn"]):
+            return prompt(orca, load_keymap(), args == ["--learn"])
+        else:
+            sys.stderr.write(__doc__)
+            return 2
+    except NotRunning as err:
+        log(f"{cmd}: {err}")
+        return 1
+    except GLib.Error as err:
+        log(f"{cmd}: {err.message}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

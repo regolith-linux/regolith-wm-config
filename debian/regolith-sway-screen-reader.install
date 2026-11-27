@@ -1,0 +1,5 @@
+usr/share/regolith/sway/config.d/45_screen_reader
+usr/share/regolith/sway/screen-reader/orca.conf
+usr/share/regolith/sway/screen-reader/orca-keymap.json
+scripts/regolith-sway-screen-reader usr/bin
+scripts/regolith-orcactl usr/bin

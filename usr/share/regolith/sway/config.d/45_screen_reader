@@ -1,0 +1,8 @@
+# Orca screen reader keys for the sway session (regolith-sway-screen-reader).
+# On Wayland Orca can't grab keys, so sway binds the Orca key (Insert or keypad
+# Insert), Orca+key chords and the keypad review keys, and runs each command
+# through Orca's remote controller (Orca 49 or later). The bindings are only
+# there while the screen reader is on in Settings > Accessibility and Orca is
+# running; otherwise every key reaches applications as usual. The X11 session
+# doesn't need this: Orca grabs its keys there itself.
+exec regolith-sway-screen-reader
