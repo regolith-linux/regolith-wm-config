@@ -80,6 +80,7 @@ Recommends: regolith-sway-background,
   regolith-sway-next-workspace,
   regolith-sway-polkit,
   regolith-sway-screensharing,
+  regolith-sway-screen-reader,
   regolith-sway-session,
   regolith-sway-touchpad-gestures,
   regolith-sway-unclutter
@@ -515,6 +516,26 @@ Architecture: any
 Depends: ${misc:Depends},
   regolith-wm-config
 Description: Keybindings to cycle between keyboard layotus
+
+Package: regolith-sway-screen-reader
+Architecture: all
+Depends: ${misc:Depends},
+  gir1.2-glib-2.0,
+  gsettings-desktop-schemas,
+  python3,
+  python3-gi,
+  regolith-wm-config
+Recommends: gir1.2-gtk-4.0,
+  gir1.2-gtk4layershell-1.0
+Suggests: orca (>= 49)
+Description: Orca screen reader keys for the Regolith sway session
+ On Wayland the Orca screen reader can't grab its keys, so its Insert+key
+ commands, keypad review keys and learn mode don't work in sway (and in GTK 4
+ applications Orca gets no keys at all). This package binds those keys in sway
+ and runs each command through Orca's remote controller (Orca 49 or later),
+ with a small prompt for learn mode. The bindings are only active while the
+ screen reader is on and Orca is running. Key echo and reading text while the
+ caret moves still depend on the application forwarding keys to Orca.
 
 Package: regolith-sway-grimshot
 Architecture: any
